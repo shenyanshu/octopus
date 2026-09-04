@@ -24,40 +24,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 版本只信任触发本次运行的 Git 标签，拒绝前导零等非规范 semver，避免误发布。
-      # 同时基于本地全部严格 semver tag 数值比较 is_latest / is_latest_minor，
-      # 防止旧 tag 重跑回退 GHCR 浮动标签或抢占 GitHub Latest。
+      # 版本只信任触发本次运行的 Git 标签，且仅接受本 fork 的规范发布标签
+      # vX.Y.Z-shenyanshu.N（数字段无前导零，fork 修订号 N>=1），
+      # 拒绝上游原始 vX.Y.Z、预发布变体与畸形标签，避免误发布。
+      # 同时将 -shenyanshu. 折叠为 . 得到四段纯数字，按 X/Y/Z/N 数值比较
+      # 计算是否数字最高，防止旧 tag 重跑回退 latest 浮动标签或抢占 GitHub Latest。
       - name: Resolve version
         id: version
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          STRICT='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          STRICT='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-shenyanshu\.([1-9][0-9]*)$'
 
           if ! [[ "${TAG}" =~ ${STRICT} ]]; then
-            echo "ref '${TAG}' is not a stable semver tag (no leading zeros)" >&2
+            echo "ref '${TAG}' is not a canonical fork release tag (vX.Y.Z-shenyanshu.N, N>=1, no leading zeros)" >&2
             exit 1
           fi
           echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version_no_v=${TAG#v}" >> "$GITHUB_OUTPUT"
 
           NUM="${TAG#v}"
-          MAJOR="$(cut -d. -f1 <<<"${NUM}")"
-          MINOR="$(cut -d. -f2 <<<"${NUM}")"
+          NUM="${NUM//-shenyanshu./.}"
 
           # 逐段数值排序而非字典序，否则 0.10.0 会被误判低于 0.9.0
           sorted_versions() {
-            git tag --list 'v*' | grep -E "${STRICT}" | sed 's/^v//' \
-              | sort -t. -k1,1n -k2,2n -k3,3n
+            git tag --list 'v*' | grep -E "${STRICT}" | sed -e 's/^v//' -e 's/-shenyanshu\././' \
+              | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n
           }
 
           latest_all="$(sorted_versions | tail -n 1)"
-          latest_series="$(sorted_versions | awk -F. -v maj="${MAJOR}" -v min="${MINOR}" '$1==maj && $2==min' | tail -n 1)"
 
           if [ "${latest_all}" = "${NUM}" ]; then is_latest=true; else is_latest=false; fi
-          if [ "${latest_series}" = "${NUM}" ]; then is_latest_minor=true; else is_latest_minor=false; fi
-
           echo "is_latest=${is_latest}" >> "$GITHUB_OUTPUT"
-          echo "is_latest_minor=${is_latest_minor}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -108,7 +106,8 @@ jobs:
           prerelease: false
           tag_name: ${{ steps.version.outputs.version }}
 
-      # 精确标签 v* 与无 v 版本始终发布；浮动标签仅在该 tag 数值最高时更新。
+      # 精确标签与无 v 版本始终发布；latest 仅在当前 tag 为数值最高的规范 fork 发布时更新。
+      # 不生成 X.Y 等上游样式浮动标签，避免与上游语义混淆。
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v6
@@ -116,8 +115,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.version.outputs.is_latest_minor == 'true' }}
+            type=raw,value=${{ steps.version.outputs.version_no_v }}
             type=raw,value=latest,enable=${{ steps.version.outputs.is_latest == 'true' }}
 
       - name: Set up QEMU
