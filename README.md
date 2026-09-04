@@ -45,43 +45,6 @@ docker compose up -d
 ```
 
 
-### 📦 Download from Release
-
-Download the binary for your platform from [Releases](https://github.com/shenyanshu/octopus/releases), then run:
-
-```bash
-./octopus start
-```
-
-### 🛠️ Build from Source
-
-**Requirements:**
-- Go 1.24.4
-- Node.js 24+
-- pnpm
-
-```bash
-# Clone the repository
-git clone https://github.com/shenyanshu/octopus.git
-cd octopus
-# Build frontend
-cd web && pnpm install && pnpm run build
-# Start the backend service
-go run main.go start 
-```
-
-> 💡 **Tip**: The frontend build artifacts are embedded into the Go binary, so you must build the frontend before starting the backend.
-
-**Development Mode**
-
-```bash
-cd web && pnpm install && pnpm run dev
-## Open a new terminal, start the backend service
-go run main.go start
-## Access the frontend at
-http://localhost:5173
-```
-
 ### 🔐 Default Credentials
 
 After first launch, visit http://localhost:8080 and log in to the management panel with:
@@ -168,7 +131,6 @@ All configuration options can be overridden via environment variables using the 
 | `OCTOPUS_DATABASE_TYPE` | `database.type` |
 | `OCTOPUS_DATABASE_PATH` | `database.path` |
 | `OCTOPUS_LOG_LEVEL` | `log.level` |
-| `OCTOPUS_GITHUB_PAT` | For rate limiting when getting the latest version (optional) |
 
 ## 📸 Screenshots
 

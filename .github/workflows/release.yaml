@@ -5,8 +5,9 @@ on:
     tags:
       - 'v*'
 
+# 仅发布 GHCR 镜像：contents:read 供 checkout，packages:write 供 GHCR 推送。
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 # 发布必须串行且不可取消，避免并发发布或重跑到一半被取消造成半发布。
@@ -25,10 +26,9 @@ jobs:
           fetch-depth: 0
 
       # 版本只信任触发本次运行的 Git 标签，且仅接受本 fork 的规范发布标签
-      # vX.Y.Z-shenyanshu.N（数字段无前导零，fork 修订号 N>=1），
-      # 拒绝上游原始 vX.Y.Z、预发布变体与畸形标签，避免误发布。
+      # vX.Y.Z-shenyanshu.N（数字段无前导零，fork 修订号 N>=1）。
       # 同时将 -shenyanshu. 折叠为 . 得到四段纯数字，按 X/Y/Z/N 数值比较
-      # 计算是否数字最高，防止旧 tag 重跑回退 latest 浮动标签或抢占 GitHub Latest。
+      # 计算是否数字最高，防止旧 tag 重跑回退 latest 浮动标签。
       - name: Resolve version
         id: version
         run: |
@@ -57,55 +57,6 @@ jobs:
           if [ "${latest_all}" = "${NUM}" ]; then is_latest=true; else is_latest=false; fi
           echo "is_latest=${is_latest}" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: '11.10.0'
-          cache: true
-          cache_dependency_path: web/pnpm-lock.yaml
-
-      - name: Build frontend
-        working-directory: web
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm run build
-        env:
-          VITE_APP_VERSION: ${{ steps.version.outputs.version }}
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Update price
-        run: python3 scripts/updatePrice.py
-
-      - name: Build
-        run: bash scripts/build.sh
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-
-      # 先创建 draft Release 并上传资产；重跑时 action 会按 tag 更新同一 draft，可恢复。
-      - name: Create draft Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: build/archives/*
-          generate_release_notes: true
-          draft: true
-          prerelease: false
-          tag_name: ${{ steps.version.outputs.version }}
-
       # 精确标签与无 v 版本始终发布；latest 仅在当前 tag 为数值最高的规范 fork 发布时更新。
       # 不生成 X.Y 等上游样式浮动标签，避免与上游语义混淆。
       - name: Docker meta
@@ -131,7 +82,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # TARGETPLATFORM 由 buildx 自动按平台提供，无需显式 build-args 传递。
+      # 多阶段 Dockerfile 在容器内从源码构建前端与后端，不依赖预构建产物。
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -143,12 +94,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # GHCR 推送成功后才公开 draft；latest 标记与数值比较结果一致，旧 tag 重跑不会抢占。
-      - name: Publish Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release edit "${{ steps.version.outputs.version }}" \
-            --draft=false \
-            --latest=${{ steps.version.outputs.is_latest }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ github.sha }}

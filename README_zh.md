@@ -45,43 +45,6 @@ docker compose up -d
 ```
 
 
-### 📦 从 Release 下载
-
-从 [Releases](https://github.com/shenyanshu/octopus/releases) 下载对应平台的二进制文件，然后运行：
-
-```bash
-./octopus start
-```
-
-### 🛠️ 源码运行
-
-**环境要求：**
-- Go 1.24.4
-- Node.js 24+
-- pnpm
-
-```bash
-# 克隆项目
-git clone https://github.com/shenyanshu/octopus.git
-cd octopus
-# 构建前端
-cd web && pnpm install && pnpm run build
-# 启动后端服务
-go run main.go start 
-```
-
-> 💡 **提示**：前端构建产物会被嵌入到 Go 二进制文件中，所以必须先构建前端再启动后端。
-
-**开发模式**
-
-```bash
-cd web && pnpm install && pnpm run dev
-## 新建终端,启动后端服务
-go run main.go start
-## 访问前端地址
-http://localhost:5173
-```
-
 ### 🔐 默认账户
 
 首次启动后，访问 http://localhost:8080 使用以下默认账户登录管理面板：
@@ -168,7 +131,6 @@ http://localhost:5173
 | `OCTOPUS_DATABASE_TYPE` | `database.type` |
 | `OCTOPUS_DATABASE_PATH` | `database.path` |
 | `OCTOPUS_LOG_LEVEL` | `log.level` |
-| `OCTOPUS_GITHUB_PAT` | 用于获取最新版本时的速率限制(可选) |
 
 
 ## 📸 界面预览

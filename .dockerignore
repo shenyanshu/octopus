@@ -1,0 +1,11 @@
+# 多阶段构建会 COPY 整个仓库上下文，排除与构建无关且体积巨大的本地内容。
+.git
+.github
+.cortexkit
+.vscode
+data
+build
+web/node_modules
+web/dist
+static/out/*
+!static/out/README.md
