@@ -213,9 +213,28 @@ func updateGroup(c *gin.Context) {
 	if oldGroup.Mode != group.Mode {
 		relay.ResetRouteState(id)
 	}
+	// 评分模式下成员被删除时, 在生成更新响应前同步丢弃进程内评分:
+	// 已删成员的分数不出现在 runtime 里, 其路由代数随之失效, 在途请求的迟到结果也写不回新状态。
+	if group.Mode == model.GroupModeScored && req.Items != nil && groupMemberRemoved(oldGroup.Items, group.Items) {
+		relay.ResetRouteState(id)
+	}
 	response := groupResponse{Group: *group, Runtime: relay.RouteStateOf(*group)}
 	publishGroupEvent(groupEvent{Name: "changed", Data: response})
 	resp.Success(c, response)
+}
+
+// groupMemberRemoved 判断成员集合更新后是否有旧成员被删除; 新增与重排不属于删除。
+func groupMemberRemoved(oldItems, newItems []model.GroupItem) bool {
+	present := make(map[int]bool, len(newItems))
+	for _, item := range newItems {
+		present[item.ID] = true
+	}
+	for _, item := range oldItems {
+		if !present[item.ID] {
+			return true
+		}
+	}
+	return false
 }
 
 func deleteGroup(c *gin.Context) {

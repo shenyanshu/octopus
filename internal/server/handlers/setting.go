@@ -141,7 +141,8 @@ func importDB(c *gin.Context) {
 			dump.Groups[i].Mode = model.GroupModeManual
 		}
 		model.NormalizeGroupRelayConfig(&dump.Groups[i].RelayConfig)
-		if dump.Groups[i].Mode != model.GroupModeManual && dump.Groups[i].Mode != model.GroupModeFailover {
+		// 模式校验与 binding 标签同一口径: 未知模式拒绝, 评分模式与另两种模式一样可导入。
+		if !model.IsValidGroupMode(dump.Groups[i].Mode) {
 			resp.Error(c, http.StatusBadRequest, "invalid group relay mode")
 			return
 		}

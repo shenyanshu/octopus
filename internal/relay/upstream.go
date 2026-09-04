@@ -57,11 +57,12 @@ func resolveUpstreamClient(channel model.Channel) (*http.Client, func(), error) 
 func sendPassthrough(ctx context.Context, format llm.APIFormat, raw *httpclient.Request, channel model.Channel, outbound transformer.Outbound, streaming bool, modelName string) (*upstreamResponse, error) {
 	request, err := buildPassthroughRequest(format, raw, channel, outbound, modelName)
 	if err != nil {
-		return nil, err
+		// 端点解析与请求构造都发生在网络边界之前, 属于成员本地错误。
+		return nil, markMemberLocal(err)
 	}
 	httpClient, closeIdle, err := resolveUpstreamClient(channel)
 	if err != nil {
-		return nil, err
+		return nil, markMemberLocal(err)
 	}
 	if streaming {
 		// 流式响应返回后仍在读上游连接, 归还入口随响应交给消费方; 取不到响应时就地归还。
@@ -113,12 +114,22 @@ func sendPassthroughStream(ctx context.Context, format llm.APIFormat, request *h
 		return nil, err
 	}
 	if response.StatusCode >= http.StatusBadRequest {
+		statusCode, status := response.StatusCode, response.Status
 		failure, readErr := io.ReadAll(response.Body)
 		response.Body.Close()
-		if readErr != nil {
-			return nil, readErr
+		// 错误正文读取失败也保留结构化状态码在错误链上: 鉴权失败的识别不依赖正文。
+		appErr := &httpclient.Error{
+			Method:     rawRequest.Method,
+			URL:        rawRequest.URL.String(),
+			StatusCode: statusCode,
+			Status:     status,
+			Body:       failure,
+			Headers:    response.Header.Clone(),
 		}
-		return nil, fmt.Errorf("upstream responded %s: %s", response.Status, failure)
+		if readErr != nil {
+			return nil, fmt.Errorf("%w: %w", appErr, readErr)
+		}
+		return nil, fmt.Errorf("%w: %s", appErr, failure)
 	}
 
 	events := httpclient.NewDefaultSSEDecoder(ctx, response.Body)
@@ -145,11 +156,11 @@ func sendPassthroughStream(ctx context.Context, format llm.APIFormat, request *h
 
 // conversionMiddleware 保存跨协议 pipeline 单次调用需要应用和取得的状态。
 type conversionMiddleware struct {
-	pipeline.DummyMiddleware // 提供本次无需处理的其余 pipeline 中间件方法。
-	channel model.Channel // 本轮上游请求使用的渠道配置。
-	format  llm.APIFormat // 上游渠道协议, 用于校验统一响应终态。
-	rawBody []byte        // 上游非流式响应或错误的原始正文。
-	usage   *llm.Usage    // 非流式统一响应中确认的用量。
+	pipeline.DummyMiddleware               // 提供本次无需处理的其余 pipeline 中间件方法。
+	channel                  model.Channel // 本轮上游请求使用的渠道配置。
+	format                   llm.APIFormat // 上游渠道协议, 用于校验统一响应终态。
+	rawBody                  []byte        // 上游非流式响应或错误的原始正文。
+	usage                    *llm.Usage    // 非流式统一响应中确认的用量。
 }
 
 // OnOutboundRawRequest 在转换后的上游请求上应用渠道参数和自定义 Header。
@@ -194,7 +205,7 @@ func sendConverted(ctx context.Context, format llm.APIFormat, raw *httpclient.Re
 
 	httpClient, closeIdle, err := resolveUpstreamClient(channel)
 	if err != nil {
-		return nil, err
+		return nil, markMemberLocal(err)
 	}
 	// 流式响应要等消费方读完才能归还连接, 故只在提交流式结果那一处移交, 其余出口一律就地归还。
 	committed := false
@@ -205,6 +216,11 @@ func sendConverted(ctx context.Context, format llm.APIFormat, raw *httpclient.Re
 			}
 		}()
 	}
+	// 请求级预检: 客户端请求体必须能被客户端协议转换器解析, 该失败与成员无关, 评分模式据此直接终止请求。
+	// 预检通过后 pipeline 内的同一步必然成功, 未标记 UpstreamError 的 Process 错误便只剩成员本地原因。
+	if _, err := inbound.TransformRequest(ctx, raw); err != nil {
+		return nil, markRequestInvalid(err)
+	}
 	middleware := &conversionMiddleware{channel: channel, format: outbound.APIFormat()}
 	processor := pipeline.NewFactory(httpclient.NewHttpClientWithClient(httpClient)).Pipeline(
 		inbound,
@@ -214,7 +230,12 @@ func sendConverted(ctx context.Context, format llm.APIFormat, raw *httpclient.Re
 	result, err := processor.Process(ctx, raw)
 	if err != nil {
 		if len(middleware.rawBody) > 0 {
-			return nil, fmt.Errorf("%w: %s", err, middleware.rawBody)
+			err = fmt.Errorf("%w: %s", err, middleware.rawBody)
+		}
+		// pipeline 只给真实跨越网络边界的错误打 UpstreamError 标记;
+		// 其余(出站构造, 认证整理, 渠道参数覆盖)都发生在网络边界之前, 按成员本地错误归因。
+		if !pipeline.IsUpstreamError(err) {
+			err = markMemberLocal(err)
 		}
 		return nil, err
 	}

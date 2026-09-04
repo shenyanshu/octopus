@@ -256,9 +256,9 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
                                                 key={item.id}
                                                 type="button"
                                                 aria-pressed={itemCurrent}
-                                                disabled={activeGroup.mode === 'failover' || switchingItemId !== null || stopRound.isPending}
+                                                disabled={activeGroup.mode !== 'manual' || switchingItemId !== null || stopRound.isPending}
                                                 onClick={async () => {
-                                                    if (activeGroup.mode === 'failover') return;
+                                                    if (activeGroup.mode !== 'manual') return;
                                                     setSwitchingItemId(item.id);
                                                     const isCurrent = activeGroup.runtime.current_item_id === item.id;
                                                     try {

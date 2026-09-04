@@ -5,7 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { Group } from '@/api/group';
 
-// MemberStatusProps 描述成员的冷却和亲和状态。
+// SCORE_DEFAULT 与后端评分初始分一致：runtime.scores 未记录该成员时按初始分展示。
+const SCORE_DEFAULT = 99;
+
+// MemberStatusProps 描述成员的冷却、亲和与评分状态。
 interface MemberStatusProps {
     group: Group; // group 提供当前路由和成员冷却时间戳。
     itemId?: number; // itemId 是待展示状态的成员 ID。
@@ -51,7 +54,7 @@ export function useRuntimeClock(source?: Group | Group[]) {
     return now;
 }
 
-// MemberStatus 展示成员的冷却、亲和倒计时或当前使用圆点。
+// MemberStatus 展示成员的冷却、亲和倒计时、评分或当前使用标记。
 export function MemberStatus({ group, itemId, now, active = false, activeClassName }: MemberStatusProps) {
     const t = useTranslations('group.card');
 
@@ -81,9 +84,25 @@ export function MemberStatus({ group, itemId, now, active = false, activeClassNa
         }
     }
 
-    return active ? (
+    const activeMark = active ? (
         <span aria-hidden="true" className={cn('inline-flex shrink-0 text-primary', activeClassName)}>
             <CircleCheck className="size-4" />
         </span>
     ) : null;
+
+    if (group.mode === 'scored' && itemId !== undefined) {
+        const item = group.items.find((entry) => entry.id === itemId);
+        const score = group.runtime.scores[itemId] ?? SCORE_DEFAULT;
+
+        return (
+            <>
+                <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] font-medium">
+                    {t('score', { score: item?.available === false ? '—' : score })}
+                </Badge>
+                {activeMark}
+            </>
+        );
+    }
+
+    return activeMark;
 }

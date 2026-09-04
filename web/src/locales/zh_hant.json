@@ -312,7 +312,8 @@
             "empty": "暫無規則",
             "activate": "設為活動項",
             "cooling": "冷卻 {seconds}s",
-            "affinity": "親和 {seconds}s"
+            "affinity": "親和 {seconds}s",
+            "score": "評分 {score}"
         },
         "detail": {
             "actions": {
@@ -324,9 +325,10 @@
         "form": {
             "name": "分組名稱",
             "mode": "路由模式",
-            "modeHint": "手動固定選中成員；故障轉移按成員順序並在失敗時切換",
+            "modeHint": "手動固定選中成員；故障轉移按成員順序並在失敗時切換；評分路由持續使用最高分成員",
             "manual": "手動",
             "failover": "故障轉移",
+            "scored": "評分路由",
             "members": "成員",
             "relay": "路由策略",
             "retryCount": "總嘗試次數",

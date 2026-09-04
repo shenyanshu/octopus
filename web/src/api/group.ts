@@ -4,8 +4,8 @@ import { apiRequest } from './client';
 import { queryClient } from './client';
 import { groupListQueryOptions } from './queries';
 
-// GroupMode 表示分组的手动或故障转移路由模式。
-export type GroupMode = 'manual' | 'failover';
+// GroupMode 表示分组的手动、故障转移或评分路由模式。
+export type GroupMode = 'manual' | 'failover' | 'scored';
 
 // GroupRelayConfig 保存分组 Relay 配置。
 export interface GroupRelayConfig {
@@ -33,13 +33,15 @@ export interface GroupItem {
 }
 
 // GroupRuntime 是分组的实时路由状态。
-// current_item_id 两种模式共用：手动模式下即人工指定的成员，故障转移模式下由 Relay 的路由决定。
+// current_item_id 三种模式共用：手动模式下即人工指定的成员，故障转移与评分模式下由 Relay 的路由决定。
 export interface GroupRuntime {
     group_id: number;
     current_item_id: number;
     probe_item_id: number;
     affinity_until: number;
     cooldowns: Record<number, number>;
+    // 评分模式下各成员当前分数；未记录的成员按与后端一致的初始分补齐。
+    scores: Record<number, number>;
 }
 
 // Group 是客户端模型名称对应的渠道分组。

@@ -312,7 +312,8 @@
             "empty": "暂无规则",
             "activate": "设为活动项",
             "cooling": "冷却 {seconds}s",
-            "affinity": "亲和 {seconds}s"
+            "affinity": "亲和 {seconds}s",
+            "score": "评分 {score}"
         },
         "detail": {
             "actions": {
@@ -324,9 +325,10 @@
         "form": {
             "name": "分组名称",
             "mode": "路由模式",
-            "modeHint": "手动固定选中成员；故障转移按成员顺序并在失败时切换",
+            "modeHint": "手动固定选中成员；故障转移按成员顺序并在失败时切换；评分路由持续使用最高分成员",
             "manual": "手动",
             "failover": "故障转移",
+            "scored": "评分路由",
             "members": "成员",
             "relay": "路由策略",
             "retryCount": "总尝试次数",

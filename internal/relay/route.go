@@ -3,6 +3,7 @@ package relay
 import (
 	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
@@ -11,24 +12,27 @@ import (
 // RouteState 是一个分组的进程内路由状态; 跨该分组的全部请求共享。
 // 同时作为路由流的消息形状与分组读取响应中的 runtime 字段: 冷却, 探测与亲和都是本包路由算法的概念,
 // 故状态形状由本包定义, 分组的持久化配置不含它; 内部标志未导出, 不会随消息出到 JSON。
-// 两种模式共用 CurrentItemID: 手动模式下即人工指定的成员, 故障转移模式下由路由决定,
-// 前端由此只读这一个字段即可知道当前承载请求的成员, 无需再按模式分支。
+// 三种模式共用 CurrentItemID: 手动模式下即人工指定的成员, 故障转移模式下由路由决定,
+// 评分模式下是同分优先的现任成员, 前端由此只读这一个字段即可知道当前承载请求的成员, 无需再按模式分支。
 type RouteState struct {
 	GroupID       int           `json:"group_id"`        // 状态所属的分组 ID, 供状态流按分组定位。
 	CurrentItemID int           `json:"current_item_id"` // 当前承载请求的成员 ID, 0 表示尚未建立路由或未人工指定。
-	ProbeItemID   int           `json:"probe_item_id"`   // 当前占用恢复探测的成员 ID, 同一分组同时只允许一个成员被探测; 手动模式恒为 0。
-	AffinityUntil int64         `json:"affinity_until"`  // 当前路由的亲和截止 Unix 毫秒时间, 0 表示无亲和; 手动模式恒为 0。
-	Cooldowns     map[int]int64 `json:"cooldowns"`       // 失败成员 ID 对应的冷却截止 Unix 毫秒时间, 已到期的条目由前端按当前时间忽略。
+	ProbeItemID   int           `json:"probe_item_id"`   // 当前占用恢复探测的成员 ID, 同一分组同时只允许一个成员被探测; 仅故障转移模式使用。
+	AffinityUntil int64         `json:"affinity_until"`  // 当前路由的亲和截止 Unix 毫秒时间, 0 表示无亲和; 仅故障转移模式使用。
+	Cooldowns     map[int]int64 `json:"cooldowns"`       // 失败成员 ID 对应的冷却截止 Unix 毫秒时间, 已到期的条目由前端按当前时间忽略; 仅故障转移模式写入。
+	Scores        map[int]int   `json:"scores"`          // 评分模式下各成员当前分数; 未记录的成员视为初始分, 前端按同规则补齐。
 
-	affinityArmed bool // 当前路由下一次成功后是否开始亲和, 仅故障切换后为真。
+	affinityArmed bool   // 当前路由下一次成功后是否开始亲和, 仅故障切换后为真。
+	epoch         uint64 // 路由代数, 重建时递增; 迟到的成败结果携带旧代数时不允许写入, 防止污染重置后的新状态。
 }
 
 const routeStreamBuffer = 16 // 单个路由流连接的非阻塞消息缓冲容量。
 
 var (
-	routeMu      sync.Mutex                           // routeMu 保护全部分组路由状态。
-	routes       = make(map[int]*RouteState)          // routes 按分组 ID 保存路由状态。
-	routeStreams = make(map[chan RouteState]struct{}) // 全部路由 SSE 连接。
+	routeMu       sync.Mutex                           // routeMu 保护全部分组路由状态。
+	routes        = make(map[int]*RouteState)          // routes 按分组 ID 保存路由状态。
+	routeStreams  = make(map[chan RouteState]struct{}) // 全部路由 SSE 连接。
+	routeEpochSeq atomic.Uint64                        // 路由代数发生器, 进程内递增, 不持久化。
 )
 
 // RouteStateOf 返回分组当前的实时路由状态, 供读取接口随分组一并返回。
@@ -39,6 +43,7 @@ func RouteStateOf(group model.Group) RouteState {
 			GroupID:       group.ID,
 			CurrentItemID: group.ActiveItemID,
 			Cooldowns:     map[int]int64{},
+			Scores:        map[int]int{},
 		}
 	}
 
@@ -47,10 +52,12 @@ func RouteStateOf(group model.Group) RouteState {
 
 	route := routes[group.ID]
 	if route == nil {
-		return RouteState{GroupID: group.ID, Cooldowns: map[int]int64{}}
+		// 未初始化状态也必须给出非空 map: runtime JSON 的稳定契约是空对象而非 null。
+		return RouteState{GroupID: group.ID, Cooldowns: map[int]int64{}, Scores: map[int]int{}}
 	}
 	state := *route
 	state.Cooldowns = maps.Clone(route.Cooldowns)
+	state.Scores = maps.Clone(route.Scores)
 	return state
 }
 
@@ -117,9 +124,10 @@ func pickGroupItem(group model.Group) model.GroupItem {
 	return model.GroupItem{}
 }
 
-// recordRouteSuccess 上报一轮成功: 结束该成员的冷却与探测占用, 并在故障切换后按配置开始亲和。
+// recordRouteSuccess 上报故障转移模式的一轮成功: 结束该成员的冷却与探测占用, 并在故障切换后按配置开始亲和。
+// 评分模式的成功记账见 recordScoredSuccess, 不经过冷却与亲和。
 func recordRouteSuccess(group model.Group, itemID int) {
-	if group.Mode == model.GroupModeManual {
+	if group.Mode != model.GroupModeFailover {
 		return
 	}
 
@@ -156,10 +164,10 @@ func recordRouteSuccess(group model.Group, itemID int) {
 	}
 }
 
-// recordRouteFailure 上报一轮失败: 达到配置的总尝试次数后将该成员打入冷却并让出当前路由, 返回是否已冷却。
-// failures 为该成员在本请求内包含首次请求的连续失败次数, 由调用方累计。
+// recordRouteFailure 上报故障转移模式的一轮失败: 达到配置的总尝试次数后将该成员打入冷却并让出当前路由, 返回是否已冷却。
+// failures 为该成员在本请求内包含首次请求的连续失败次数, 由调用方累计; 评分模式的失败记账见 recordScoredFailure。
 func recordRouteFailure(group model.Group, itemID, failures int) bool {
-	if group.Mode == model.GroupModeManual {
+	if group.Mode != model.GroupModeFailover {
 		return false
 	}
 
@@ -190,8 +198,11 @@ func recordRouteFailure(group model.Group, itemID, failures int) bool {
 	return true
 }
 
-// releaseRouteProbe 归还未产生成败结论的探测占用, 用于请求被人工中止或客户端断开。
+// releaseRouteProbe 归还未产生成败结论的探测占用, 用于请求被人工中止或客户端断开; 仅故障转移模式存在探测占用。
 func releaseRouteProbe(group model.Group, itemID int) {
+	if group.Mode != model.GroupModeFailover {
+		return
+	}
 	routeMu.Lock()
 	defer routeMu.Unlock()
 
@@ -205,7 +216,7 @@ func releaseRouteProbe(group model.Group, itemID int) {
 func groupRouteLocked(group model.Group) *RouteState {
 	route := routes[group.ID]
 	if route == nil {
-		route = &RouteState{GroupID: group.ID, Cooldowns: make(map[int]int64)}
+		route = &RouteState{GroupID: group.ID, Cooldowns: make(map[int]int64), Scores: make(map[int]int), epoch: routeEpochSeq.Add(1)}
 		routes[group.ID] = route
 	}
 	items := make(map[int]bool, len(group.Items))
@@ -215,6 +226,12 @@ func groupRouteLocked(group model.Group) *RouteState {
 	for itemID := range route.Cooldowns {
 		if !items[itemID] {
 			delete(route.Cooldowns, itemID)
+		}
+	}
+	// 评分表同样随成员删除清理, 分数是成员的属性而不是分组的历史。
+	for itemID := range route.Scores {
+		if !items[itemID] {
+			delete(route.Scores, itemID)
 		}
 	}
 	if route.ProbeItemID != 0 && !items[route.ProbeItemID] {
@@ -238,10 +255,11 @@ func itemOf(group model.Group, itemID int) model.GroupItem {
 	return model.GroupItem{}
 }
 
-// publishRouteLocked 非阻塞发布路由状态, 连接拥塞时关闭它并交给客户端重连获取全量快照; 冷却表按值复制以免前端读到后续变更; 调用方必须持有锁。
+// publishRouteLocked 非阻塞发布路由状态, 连接拥塞时关闭它并交给客户端重连获取全量快照; 冷却表与评分表按值复制以免前端读到后续变更; 调用方必须持有锁。
 func publishRouteLocked(route *RouteState) {
 	message := *route
 	message.Cooldowns = maps.Clone(route.Cooldowns)
+	message.Scores = maps.Clone(route.Scores)
 	for stream := range routeStreams {
 		select {
 		case stream <- message:

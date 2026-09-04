@@ -76,8 +76,9 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 		// 登记进程内请求状态, 返回的记录是后续全部状态写入和前端可视化推送的入口。
 		request := newRequestState(metadata.Model, group.ID, requestProtocol, string(raw.Body), c.GetInt("api_key_id"))
 		ctx := c.Request.Context()
-		failedItemID := 0 // 当前累计连续失败次数的成员 ID。
-		failures := 0     // 该成员包含首次请求的连续失败次数。
+		failedItemID := 0              // 当前累计连续失败次数的成员 ID。
+		failures := 0                  // 该成员包含首次请求的连续失败次数。
+		excluded := make(map[int]bool) // 本请求内不再选择的成员: 已跨网络边界尝试过或已确认本地不可用。
 
 		for {
 			if ctx.Err() != nil {
@@ -94,20 +95,41 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				continue
 			}
 
-			// 手动模式取人工指定的成员, 故障转移模式按优先级选择未禁用且不在冷却中的成员。
+			// 手动模式取人工指定的成员, 故障转移模式按优先级选择未禁用且不在冷却中的成员,
+			// 评分模式在可用成员里选分数最高且本请求未排除的。
 			// 没有目标时等待重新选择, 期间人工切换渠道, 补齐成员或成员冷却到期即可让请求继续。
-			item := pickGroupItem(group)
+			var item model.GroupItem
+			var routeEpoch uint64
+			if group.Mode == model.GroupModeScored {
+				item, routeEpoch = pickScoredItem(group, excluded)
+			} else {
+				item = pickGroupItem(group)
+			}
 			if item.ID == 0 {
+				// 评分模式下成员尚存却无可选目标, 只可能是本请求已排除全部成员:
+				// 明确以失败终结, 等待重试会对同一批成员形成无界循环。
+				// 全员本地不可用(excluded 为空)时仍走等待, 让配置恢复后请求继续。
+				if group.Mode == model.GroupModeScored && len(excluded) > 0 && len(group.Items) > 0 {
+					failure := errors.New("all group members failed")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
+				}
 				if !request.wait(ctx, group.RelayConfig.MemberRetryIntervalSeconds) {
 					return
 				}
 				continue
 			}
 
-			// 成员指向的授权缺失, 凭据被停用或两侧已被删除时等待, 该成员可能很快被改回可用配置。
+			// 成员指向的授权缺失, 凭据被停用或两侧已被删除时, 该成员当前本地不可用。
+			// 评分模式在请求内排除它并立即尝试下一个成员; 其余模式等待配置恢复, 行为不变。
 			// ChannelGrantGet 一次校验齐这几种情况, 取到的授权必然可直接转发, 无需再逐项检查。
 			grant, err := op.ChannelGrantGet(item.ChannelGrantID)
 			if err != nil {
+				if group.Mode == model.GroupModeScored {
+					excluded[item.ID] = true
+					continue
+				}
 				if !request.wait(ctx, group.RelayConfig.MemberRetryIntervalSeconds) {
 					return
 				}
@@ -116,9 +138,13 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			channelModel := grant.ChannelModel
 			channelKey := grant.ChannelKey
 
-			// 成员指向的渠道已被删除时同样等待, 该成员可能很快被改回可用渠道。
+			// 成员指向的渠道已被删除时同样视为本地不可用, 评分模式排除后换下一个。
 			channel, err := op.ChannelGet(channelModel.ChannelID)
 			if err != nil {
+				if group.Mode == model.GroupModeScored {
+					excluded[item.ID] = true
+					continue
+				}
 				if !request.wait(ctx, group.RelayConfig.MemberRetryIntervalSeconds) {
 					return
 				}
@@ -145,6 +171,13 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			// 在渠道授权支持的协议内选出本轮上游协议, 按该协议的路径与授权绑定的凭据构造出站转换器。
 			// 先于登记本轮目标: 选中的协议是本轮目标的一部分, 需与渠道和模型一并推给界面。
 			outbound, targetProtocol, passthrough, err := buildOutbound(channel, grant, *channelKey, requestProtocol)
+			if err != nil {
+				// 协议构造失败发生在网络边界之前, 归为成员本地错误。
+				err = markMemberLocal(err)
+			}
+
+			// 本轮即将跨越网络边界请求上游: 登记为本请求已排除的成员, 评分模式后续轮次不再选它。
+			excluded[item.ID] = true
 
 			// 为本轮上游调用建立独立取消入口并登记当前目标; 取消原因用于区分人工中止与响应超时。
 			roundCtx, cancelRoundCause := context.WithCancelCause(ctx)
@@ -207,7 +240,32 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 					continue
 				}
 				cancelRound()
-				// 本轮真实失败只计入当前渠道和成员, 客户端取消与人工中止不计为渠道故障。
+
+				// 评分模式按归因分类记账: 请求级与成员本地错误不写渠道统计也不扣分,
+				// 只有真实跨越网络边界的失败才归因渠道并影响评分。
+				if group.Mode == model.GroupModeScored {
+					outcome := classifyRoundFailure(err)
+					if outcome == roundOutcomeUpstreamFailure || outcome == roundOutcomeUpstreamAuth {
+						metrics := model.StatsMetrics{WaitTime: time.Since(roundStartedAt).Milliseconds(), RequestFailed: 1}
+						_ = op.ChannelStatsUpdate(channel.ID, metrics)
+						_ = op.ChannelModelStatsUpdate(channelModel.ID, metrics)
+						_ = op.ChannelKeyStatsUpdate(channelKey.ID, metrics)
+					}
+					switch outcome {
+					case roundOutcomeRequestInvalid:
+						request.markFailed(err, "", nil)
+						rejectRequest(c, inbound, err)
+						return
+					case roundOutcomeMemberLocal:
+						excluded[item.ID] = true
+						continue
+					default:
+						recordScoredFailure(group, item.ID, routeEpoch, err)
+						continue
+					}
+				}
+
+				// 故障转移模式的既有记账路径, 行为不变。
 				metrics := model.StatsMetrics{WaitTime: time.Since(roundStartedAt).Milliseconds(), RequestFailed: 1}
 				_ = op.ChannelStatsUpdate(channel.ID, metrics)
 				_ = op.ChannelModelStatsUpdate(channelModel.ID, metrics)
@@ -252,6 +310,8 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				_ = op.ChannelStatsUpdate(channel.ID, metrics)
 				_ = op.ChannelModelStatsUpdate(channelModel.ID, metrics)
 				_ = op.ChannelKeyStatsUpdate(channelKey.ID, metrics)
+				// 评分模式: 非流式响应完整取得即上游完整成功, 此后客户端写失败不改变该成员的健康结论。
+				recordScoredSuccess(group, item.ID, routeEpoch)
 				request.markCommitted()
 				n, err := c.Writer.Write(result.body)
 				if err == nil && n != len(result.body) {
@@ -279,6 +339,7 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			event := result.first
 			last := result.last // 已转发的最后一个事件是否已按客户端协议结束整个响应流。
 			committed := false
+			upstreamFault := false // 失败是否归因上游: 读流中断或结束事件携带的失败为真, 本地编码与客户端写失败为假。
 			for {
 				if event != nil {
 					chunks = append(chunks, event)
@@ -306,11 +367,21 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				}
 				if !result.events.Next() {
 					err = result.events.Err()
+					upstreamFault = true // 读流中断属于上游侧结果; err 为空时本标志不会被消费。
 					break
 				}
 				event = result.events.Current()
 				// 已提交的响应不能再换目标重试, 结束事件自身携带的失败原样转发给客户端, 并在转发后作为本请求终态。
 				last, err = inspectStreamEvent(format, event)
+				if err != nil {
+					upstreamFault = true
+				}
+			}
+			// 评分模式严格要求观察到协议成功终态: 已提交内容后流在无终态处结束属于上游截断,
+			// 记为上游失败并终结请求, 不再换路; 其余模式沿用历史语义。
+			if err == nil && !last && group.Mode == model.GroupModeScored {
+				err = errors.New("upstream stream ended without terminal event")
+				upstreamFault = true
 			}
 			result.events.Close()
 			// 事件流已读完, 渠道专用代理的独占连接池到此归还。
@@ -322,6 +393,11 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			responseBody, meta, aggregateErr := inbound.AggregateStreamChunks(context.WithoutCancel(ctx), chunks)
 			if aggregateErr == nil {
 				result.usage = meta.Usage
+			}
+			// 评分模式下聚合失败即请求失败且不记满分: 已提交的响应无法重取, 只能以失败定稿;
+			// 聚合发生在本地, 属转换问题, 不归因上游故不扣分。其余模式沿用忽略聚合错误的历史语义。
+			if aggregateErr != nil && err == nil && group.Mode == model.GroupModeScored {
+				err = aggregateErr
 			}
 			// 流式响应结束并聚合出用量后, 按最终结果完成本轮渠道和成员统计。
 			metrics := usageMetrics(channelModel.Name, result.usage)
@@ -335,13 +411,17 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			_ = op.ChannelModelStatsUpdate(channelModel.ID, metrics)
 			_ = op.ChannelKeyStatsUpdate(channelKey.ID, metrics)
 			if err != nil {
+				// 评分记账内部会忽略客户端取消与本地错误, 终态判定不受影响。
+				recordCommittedStreamFailure(group, item.ID, routeEpoch, err, upstreamFault, ctx.Err() != nil)
 				if ctx.Err() != nil {
 					request.markCanceled(ctx.Err(), string(responseBody), result.usage)
-				} else {
-					request.markFailed(err, string(responseBody), result.usage)
+					return
 				}
+				request.markFailed(err, string(responseBody), result.usage)
 				return
 			}
+			// 评分模式: 流式响应完整交付客户端才算完整成功。
+			recordScoredSuccess(group, item.ID, routeEpoch)
 			request.markSucceeded(string(responseBody), result.usage)
 			return
 		}
