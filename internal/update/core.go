@@ -102,46 +102,24 @@ func copyFile(src, dst string) error {
 
 // getDownloadFilename 返回当前平台对应的发布归档名称。
 func getDownloadFilename() (string, error) {
-	arch := runtime.GOARCH
-	goos := runtime.GOOS
+	return downloadFilenameFor(runtime.GOOS, runtime.GOARCH)
+}
 
-	switch goos {
-	case "windows":
-		switch arch {
-		case "amd64":
-			return "octopus-windows-amd64.zip", nil
-		}
-	case "darwin":
-		switch arch {
-		case "amd64":
-			return "octopus-darwin-amd64.zip", nil
-		case "arm64":
-			return "octopus-darwin-arm64.zip", nil
-		}
-	case "linux":
-		switch arch {
-		case "386":
-			return "octopus-linux-386.zip", nil
-		case "amd64":
-			return "octopus-linux-amd64.zip", nil
-		case "arm":
-			return "octopus-linux-arm.zip", nil
-		case "arm64":
-			return "octopus-linux-arm64.zip", nil
-		}
-	case "android":
-		switch arch {
-		case "386":
-			return "octopus-android-386.zip", nil
-		case "amd64":
-			return "octopus-android-amd64.zip", nil
-		case "arm":
-			return "octopus-android-arm.zip", nil
-		case "arm64":
-			return "octopus-android-arm64.zip", nil
-		}
+// downloadFilenameFor 与 scripts/build.sh 的发布矩阵严格一致：
+// 仅 linux/windows/darwin × amd64/arm64 六个组合。
+func downloadFilenameFor(goos, arch string) (string, error) {
+	supported := map[string]bool{
+		"linux/amd64":   true,
+		"linux/arm64":   true,
+		"windows/amd64": true,
+		"windows/arm64": true,
+		"darwin/amd64":  true,
+		"darwin/arm64":  true,
 	}
-	return "", fmt.Errorf("unsupported platform: %s/%s", goos, arch)
+	if !supported[goos+"/"+arch] {
+		return "", fmt.Errorf("unsupported platform: %s/%s", goos, arch)
+	}
+	return "octopus-" + goos + "-" + arch + ".zip", nil
 }
 
 func restartExecutable(execPath string) {

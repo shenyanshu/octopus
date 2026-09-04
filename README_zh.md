@@ -18,6 +18,7 @@
 - 💰 **价格同步** - 自动更新模型价格
 - 🔃 **模型同步** - 自动与渠道同步可用模型列表，省心省力
 - 🛡️ **自动故障转移** - 上游渠道发生故障时自动切换到可用渠道
+- 🎯 **评分路由** - 持续使用评分最高的成员，仅在失败后切换，以保持上游缓存连续性
 - 🔍 **请求全链路实时可视化** - 客户端发起请求后，即可在前端实时查看完整请求链路
 - 🚧 **上游错误拦截** - 拦截所有上游错误，避免中断 Agent 任务
 - 📊 **数据统计** - 全面的请求统计、Token 消耗、费用追踪
@@ -33,20 +34,20 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 bestrui/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/shenyanshu/octopus:latest
 ```
 
 或者使用 docker compose 运行
 
 ```bash
-wget https://raw.githubusercontent.com/bestruirui/octopus/refs/heads/master/docker-compose.yml
+wget https://raw.githubusercontent.com/shenyanshu/octopus/refs/heads/main/docker-compose.yml
 docker compose up -d
 ```
 
 
 ### 📦 从 Release 下载
 
-从 [Releases](https://github.com/bestruirui/octopus/releases) 下载对应平台的二进制文件，然后运行：
+从 [Releases](https://github.com/shenyanshu/octopus/releases) 下载对应平台的二进制文件，然后运行：
 
 ```bash
 ./octopus start
@@ -56,12 +57,12 @@ docker compose up -d
 
 **环境要求：**
 - Go 1.24.4
-- Node.js 18+
+- Node.js 24+
 - pnpm
 
 ```bash
 # 克隆项目
-git clone https://github.com/bestruirui/octopus.git
+git clone https://github.com/shenyanshu/octopus.git
 cd octopus
 # 构建前端
 cd web && pnpm install && pnpm run build
@@ -254,6 +255,12 @@ http://localhost:5173
 - 调用 API 时，将请求中的 `model` 参数设置为分组名称即可
 
 > 💡 **示例**：创建分组名称为 `gpt-4o`，将多个供应商的 GPT-4o 渠道加入该分组，即可通过统一的 `model: gpt-4o` 访问所有渠道。
+
+**路由模式：**
+
+- **手动** - 请求始终使用人工选中的成员
+- **故障转移** - 按配置顺序选择成员，并在发生故障时切换
+- **评分路由** - 每个成员初始为 99 分，成功后设为 100 分，可归因的上游失败后减 2 分，收到 401/403 响应后归零。请求优先使用评分最高的成员，以保持上游缓存连续性。评分仅保存在内存中，不使用探针、冷却、随机分流或持久化。
 
 ---
 

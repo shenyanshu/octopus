@@ -2,9 +2,19 @@ name: build
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
+# CI 只做验证，不需要任何写权限。
 permissions:
   contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -17,7 +27,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 'latest'
+          node-version: '24'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -26,11 +36,15 @@ jobs:
           cache: true
           cache_dependency_path: web/pnpm-lock.yaml
 
-      - name: Build frontend
+      - name: Lint frontend
         working-directory: web
         run: |
           pnpm install --frozen-lockfile
-          pnpm run build
+          pnpm run lint
+
+      - name: Build frontend
+        working-directory: web
+        run: pnpm run build
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -38,13 +52,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
+      - name: Test backend
+        run: go test ./... -count=1
 
-      - name: Update price
-        run: python3 scripts/updatePrice.py
+      - name: Vet backend
+        run: go vet ./...
 
       - name: Build backend
         run: go build -trimpath -tags=jsoniter .

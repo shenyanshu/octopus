@@ -18,6 +18,7 @@
 - 💰 **Price Sync** - Automatic model pricing updates
 - 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
 - 🛡️ **Automatic Failover** - Automatically switches to an available channel when an upstream channel fails
+- 🎯 **Scored Routing** - Stays with the highest-scoring member and switches only after failures to preserve upstream cache continuity
 - 🔍 **Real-Time End-to-End Request Visualization** - Watch the complete request path in the frontend from the moment the client sends it
 - 🚧 **Upstream Error Shielding** - Intercept all upstream errors to keep agent tasks running without interruption
 - 📊 **Analytics** - Comprehensive request statistics, token consumption, and cost tracking
@@ -33,20 +34,20 @@
 Run directly:
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 bestrui/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/shenyanshu/octopus:latest
 ```
 
 Or use docker compose:
 
 ```bash
-wget https://raw.githubusercontent.com/bestruirui/octopus/refs/heads/master/docker-compose.yml
+wget https://raw.githubusercontent.com/shenyanshu/octopus/refs/heads/main/docker-compose.yml
 docker compose up -d
 ```
 
 
 ### 📦 Download from Release
 
-Download the binary for your platform from [Releases](https://github.com/bestruirui/octopus/releases), then run:
+Download the binary for your platform from [Releases](https://github.com/shenyanshu/octopus/releases), then run:
 
 ```bash
 ./octopus start
@@ -56,12 +57,12 @@ Download the binary for your platform from [Releases](https://github.com/bestrui
 
 **Requirements:**
 - Go 1.24.4
-- Node.js 18+
+- Node.js 24+
 - pnpm
 
 ```bash
 # Clone the repository
-git clone https://github.com/bestruirui/octopus.git
+git clone https://github.com/shenyanshu/octopus.git
 cd octopus
 # Build frontend
 cd web && pnpm install && pnpm run build
@@ -253,6 +254,12 @@ Groups aggregate multiple channels into a unified external model name.
 - When calling the API, set the `model` parameter to the group name
 
 > 💡 **Example**: Create a group named `gpt-4o`, add multiple providers' GPT-4o channels to it, then access all channels via a unified `model: gpt-4o`.
+
+**Routing Modes:**
+
+- **Manual** - Keeps requests on the manually selected member
+- **Failover** - Follows the configured member order and switches when failures occur
+- **Scored** - Starts each member at 99, sets it to 100 after success, subtracts 2 after an attributable upstream failure, and sets it to 0 after a 401/403 response. Requests prefer the highest-scoring member to preserve upstream cache continuity. Scores are kept in memory and use no probes, cooldowns, random distribution, or persistence.
 
 ---
 

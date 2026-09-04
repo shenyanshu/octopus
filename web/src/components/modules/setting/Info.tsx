@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || 'unknown'; // 当前前端构建对应的应用版本。
-const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO || 'https://github.com/bestruirui/octopus'; // 项目仓库地址。
+const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO || 'https://github.com/shenyanshu/octopus'; // 项目仓库地址。
 
 // SettingInfo 展示版本信息，并在更新后清理本项目的浏览器缓存。
 export function SettingInfo() {

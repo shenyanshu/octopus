@@ -2,51 +2,67 @@ name: release
 
 on:
   push:
-    branches:
-      - master
-    paths:
-      - main.go
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
   packages: write
+
+# 发布必须串行且不可取消，避免并发发布或重跑到一半被取消造成半发布。
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     name: release
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space
-        uses: endersonmenezes/free-disk-space@v3
-        with:
-          remove_android: true
-          remove_dotnet: true
-          remove_haskell: true
-          remove_tool_cache: true
-          remove_swap: true
-          remove_packages_one_command: true
-          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
-          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
-          rm_cmd: "rmz"
-          rmz_version: "3.1.1"
-
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Publish tag
+      # 版本只信任触发本次运行的 Git 标签，拒绝前导零等非规范 semver，避免误发布。
+      # 同时基于本地全部严格 semver tag 数值比较 is_latest / is_latest_minor，
+      # 防止旧 tag 重跑回退 GHCR 浮动标签或抢占 GitHub Latest。
+      - name: Resolve version
         id: version
         run: |
-          VERSION=$(grep '^// Version ' main.go | sed 's|^// Version ||' | tr -d ' ')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          git tag "${VERSION}"
-          git push origin "${VERSION}"
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          STRICT='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+          if ! [[ "${TAG}" =~ ${STRICT} ]]; then
+            echo "ref '${TAG}' is not a stable semver tag (no leading zeros)" >&2
+            exit 1
+          fi
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+
+          NUM="${TAG#v}"
+          MAJOR="$(cut -d. -f1 <<<"${NUM}")"
+          MINOR="$(cut -d. -f2 <<<"${NUM}")"
+
+          # 逐段数值排序而非字典序，否则 0.10.0 会被误判低于 0.9.0
+          sorted_versions() {
+            git tag --list 'v*' | grep -E "${STRICT}" | sed 's/^v//' \
+              | sort -t. -k1,1n -k2,2n -k3,3n
+          }
+
+          latest_all="$(sorted_versions | tail -n 1)"
+          latest_series="$(sorted_versions | awk -F. -v maj="${MAJOR}" -v min="${MINOR}" '$1==maj && $2==min' | tail -n 1)"
+
+          if [ "${latest_all}" = "${NUM}" ]; then is_latest=true; else is_latest=false; fi
+          if [ "${latest_series}" = "${NUM}" ]; then is_latest_minor=true; else is_latest_minor=false; fi
+
+          echo "is_latest=${is_latest}" >> "$GITHUB_OUTPUT"
+          echo "is_latest_minor=${is_latest_minor}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 'latest'
+          node-version: '24'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -77,39 +93,32 @@ jobs:
       - name: Update price
         run: python3 scripts/updatePrice.py
 
-      - name: Setup Android NDK
-        id: setup-ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r28c
-
       - name: Build
         run: bash scripts/build.sh
         env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          VERSION: ${{ steps.version.outputs.version }}
 
-      - name: Generate changelog
-        run: npx changelogithub
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Upload Release
+      # 先创建 draft Release 并上传资产；重跑时 action 会按 tag 更新同一 draft，可恢复。
+      - name: Create draft Release
         uses: softprops/action-gh-release@v3
         with:
           files: build/archives/*
+          generate_release_notes: true
+          draft: true
           prerelease: false
           tag_name: ${{ steps.version.outputs.version }}
 
+      # 精确标签 v* 与无 v 版本始终发布；浮动标签仅在该 tag 数值最高时更新。
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: |
-            ghcr.io/${{ github.repository }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest
             type=raw,value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.version.outputs.is_latest_minor == 'true' }}
+            type=raw,value=latest,enable=${{ steps.version.outputs.is_latest == 'true' }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -124,22 +133,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
+      # TARGETPLATFORM 由 buildx 自动按平台提供，无需显式 build-args 传递。
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./scripts/dockerfile/Dockerfile
           push: true
-          platforms: linux/amd64,linux/i386,linux/arm64,linux/arm/v7
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            TARGETPLATFORM
+
+      # GHCR 推送成功后才公开 draft；latest 标记与数值比较结果一致，旧 tag 重跑不会抢占。
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ steps.version.outputs.version }}" \
+            --draft=false \
+            --latest=${{ steps.version.outputs.is_latest }}
