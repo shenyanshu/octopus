@@ -87,6 +87,7 @@ type GroupItem struct {
 	ChannelGrantID int           `json:"channel_grant_id" gorm:"not null;index:idx_group_grant,unique"`                // 引用的渠道授权 ID。
 	ChannelGrant   *ChannelGrant `json:"-" gorm:"foreignKey:ChannelGrantID;references:ID;constraint:OnDelete:CASCADE"` // 仅用于声明级联外键, 授权被删除时成员随之删除; 读取时不填充, 展示所需字段见下方。
 	Priority       int           `json:"priority" gorm:"not null"`                                                     // Priority 决定界面展示和故障转移模式下的成员切换顺序。
+	Score          int           `json:"-" gorm:"not null;default:99"`                                                 // 评分模式的持久分数, 99 为未记录过的缺省值; 实时权威在 Relay 路由状态, 此列只是其定期快照。分组接口与逻辑备份不透出该列(json:"-"), 物理数据库/卷备份仍随库保留。
 
 	ChannelID   int      `json:"channel_id" gorm:"-"`   // 授权所属渠道 ID。
 	ChannelName string   `json:"channel_name" gorm:"-"` // 授权所属渠道名称。

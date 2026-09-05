@@ -60,11 +60,18 @@ func recordScoredSuccess(group model.Group, itemID int, epoch uint64) {
 	routeMu.Lock()
 	defer routeMu.Unlock()
 
+	// 停机冻结核对与改分同处一个临界区: 收尾建立冻结时持有同一把锁,
+	// 冻结后的记账必然看到冻结而放弃, 保证收尾终写的就是最终值。
+	if scoreFrozen.Load() {
+		return
+	}
+
 	route := routes[group.ID]
 	if route == nil || route.epoch != epoch || scoreOfLocked(route, itemID) == scoreMax {
 		return
 	}
 	route.Scores[itemID] = scoreMax
+	markScoreDirty(itemID)
 	publishRouteLocked(route)
 }
 
@@ -76,6 +83,11 @@ func recordScoredFailure(group model.Group, itemID int, epoch uint64, err error)
 	}
 	routeMu.Lock()
 	defer routeMu.Unlock()
+
+	// 与成功记账同一冻结边界: 停机收尾建立冻结后, 失败也不得再改分或弄脏。
+	if scoreFrozen.Load() {
+		return
+	}
 
 	route := routes[group.ID]
 	if route == nil || route.epoch != epoch {
@@ -91,6 +103,7 @@ func recordScoredFailure(group model.Group, itemID int, epoch uint64, err error)
 		return
 	}
 	route.Scores[itemID] = score
+	markScoreDirty(itemID)
 	publishRouteLocked(route)
 }
 

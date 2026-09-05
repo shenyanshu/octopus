@@ -209,14 +209,16 @@ func updateGroup(c *gin.Context) {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// 选择模式变化后进程内路由不再适用, 丢弃它以免旧的冷却与亲和在切回故障转移时复活。
+	// 选择模式变化后瞬态路由不再适用: 重建使旧代数失效, 避免旧的冷却与亲和在切回故障转移时复活;
+	// 评分与模式无关, 跨模式保留, 切回评分模式即恢复(含尚未落库的最新值)。
 	if oldGroup.Mode != group.Mode {
-		relay.ResetRouteState(id)
+		relay.RebuildRouteState(id)
 	}
-	// 评分模式下成员被删除时, 在生成更新响应前同步丢弃进程内评分:
-	// 已删成员的分数不出现在 runtime 里, 其路由代数随之失效, 在途请求的迟到结果也写不回新状态。
-	if group.Mode == model.GroupModeScored && req.Items != nil && groupMemberRemoved(oldGroup.Items, group.Items) {
-		relay.ResetRouteState(id)
+	// 成员被删除时按最终成员集合校正路由状态, 在生成更新响应前完成:
+	// 保留成员的评分原样保留, 被删成员的评分与瞬态引用清理, 代数随之失效,
+	// 在途请求的迟到结果既写不回新状态, 也弄脏不了已删成员。
+	if req.Items != nil && groupMemberRemoved(oldGroup.Items, group.Items) {
+		relay.PruneRouteMembers(id, groupItemIDs(group.Items))
 	}
 	response := groupResponse{Group: *group, Runtime: relay.RouteStateOf(*group)}
 	publishGroupEvent(groupEvent{Name: "changed", Data: response})
@@ -235,6 +237,15 @@ func groupMemberRemoved(oldItems, newItems []model.GroupItem) bool {
 		}
 	}
 	return false
+}
+
+// groupItemIDs 提取成员主键集合, 供路由状态按最新成员校正。
+func groupItemIDs(items []model.GroupItem) []int {
+	ids := make([]int, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
 }
 
 func deleteGroup(c *gin.Context) {

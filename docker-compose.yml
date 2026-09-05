@@ -3,8 +3,10 @@ services:
     image: ghcr.io/shenyanshu/octopus:latest
     ports:
        - '8080:8080'
-    volumes:      
+    volumes:
        - '/path/to/data:/app/data'
     container_name: octopus
     restart: unless-stopped
     network_mode: bridge
+    # 停机宽限须覆盖服务器的有界排空(5s)与评分收尾落库(5s), 30s 足够余量。
+    stop_grace_period: 30s

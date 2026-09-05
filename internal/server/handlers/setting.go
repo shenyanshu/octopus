@@ -10,6 +10,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/relay"
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
@@ -148,6 +149,16 @@ func importDB(c *gin.Context) {
 		}
 	}
 
+	// 逻辑导入可能复用已删除成员的主键: 先隔离评分落库(等在途写完成、拦停一切后续落库),
+	// 导入结束后作废陈旧 dirty 与受影响分组的路由状态, 防止旧快照把分数写到新身份上。
+	// 受影响分组取"显式导入的分组"与"载荷成员所属分组"的并集: 仅出现在 GroupItems 而不在 Groups
+	// 的成员同样可能复用主键, 其所属分组必须一并重置。
+	if err := relay.BeginScoreImportBarrier(c.Request.Context()); err != nil {
+		resp.Error(c, http.StatusInternalServerError, "score flush barrier timeout: "+err.Error())
+		return
+	}
+	defer relay.EndScoreImportBarrier(importAffectedGroupIDs(&dump))
+
 	result, err := op.DBImportIncremental(c.Request.Context(), &dump)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
@@ -194,4 +205,27 @@ func decodeDBDump(body []byte, dump *model.DBDump) error {
 	}
 
 	return nil
+}
+
+// importAffectedGroupIDs 返回逻辑导入必须重置评分身份的分组集合: 显式导入的分组与
+// 载荷成员所属分组的并集。仅出现在 GroupItems 而不在 Groups 的成员同样可能复用主键,
+// 其所属分组必须一并重置, 否则旧快照会把分数写到新身份上。
+func importAffectedGroupIDs(dump *model.DBDump) []int {
+	seen := make(map[int]struct{}, len(dump.Groups)+len(dump.GroupItems))
+	ids := make([]int, 0, len(dump.Groups)+len(dump.GroupItems))
+	for _, group := range dump.Groups {
+		if _, ok := seen[group.ID]; ok {
+			continue
+		}
+		seen[group.ID] = struct{}{}
+		ids = append(ids, group.ID)
+	}
+	for _, item := range dump.GroupItems {
+		if _, ok := seen[item.GroupID]; ok {
+			continue
+		}
+		seen[item.GroupID] = struct{}{}
+		ids = append(ids, item.GroupID)
+	}
+	return ids
 }

@@ -34,7 +34,7 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/shenyanshu/octopus:latest
+docker run -d --stop-timeout 30 --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/shenyanshu/octopus:latest
 ```
 
 或者使用 docker compose 运行

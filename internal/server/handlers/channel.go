@@ -14,6 +14,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/price"
+	"github.com/bestruirui/octopus/internal/relay"
 	"github.com/bestruirui/octopus/internal/rhttp"
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
@@ -115,7 +116,11 @@ func updateChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
 		return
 	}
-	channel, err := op.ChannelUpdate(&req, c.Request.Context())
+	// 渠道全量替换会删除未列出的凭据、模型与授权, 经外键级联删除分组成员。
+	// 提交前失败时 mutation 为 nil, 无从也无需校正; 提交后失败(缓存刷新失败)时携带提交事实,
+	// 级联删除不可回滚, 必须先按事实校正路由再报错, 否则在途请求会把已删成员写回评分表。
+	channel, mutation, err := op.ChannelUpdate(&req, c.Request.Context())
+	reconcileChannelMutation(mutation)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -153,7 +158,10 @@ func deleteChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
 		return
 	}
-	if err := op.ChannelDel(id, c.Request.Context()); err != nil {
+	// 删除渠道会经外键级联删除其授权与引用它的分组成员; mutation 语义与更新入口相同。
+	mutation, err := op.ChannelDel(id, c.Request.Context())
+	reconcileChannelMutation(mutation)
+	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -162,6 +170,20 @@ func deleteChannel(c *gin.Context) {
 		return
 	}
 	resp.Success(c, nil)
+}
+
+// reconcileChannelMutation 按渠道写操作已提交的级联事实精确校正受影响分组的路由状态。
+// 只动成员集合实际变化的分组, 未受影响的分组不前进代数, 免得误丢其合法的迟到记账。
+func reconcileChannelMutation(mutation *op.ChannelMutation) {
+	if mutation == nil {
+		return
+	}
+	// 先按提交事实校正分组缓存, 再校正路由状态: 提交后刷新失败时缓存陈旧,
+	// 不校正缓存的话, 下一次请求会从陈旧缓存里选到已删成员。
+	op.ApplyGroupMemberDeltas(mutation.GroupDeltas)
+	for _, delta := range mutation.GroupDeltas {
+		relay.PruneRouteMembers(delta.GroupID, delta.ItemIDs)
+	}
 }
 
 // addChannelModelPrices 为渠道模型匹配校准价格，并批量写入尚不存在的价格记录。

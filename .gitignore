@@ -4,3 +4,4 @@ static/out/*
 !static/out/README.md
 .vscode
 .cortexkit/
+.slim/deepwork/

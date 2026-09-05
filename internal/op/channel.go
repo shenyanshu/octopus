@@ -60,6 +60,97 @@ func ChannelStatsList() []model.ChannelStats {
 	return stats
 }
 
+// GroupMembersDelta 描述一次已提交的渠道变更对单个分组成员集合的净影响。
+type GroupMembersDelta struct {
+	GroupID int   // 成员集合发生变化的分组。
+	ItemIDs []int // 提交后该分组仍存活的成员主键, 供路由状态按最新成员校正。
+}
+
+// ChannelMutation 汇集渠道写操作已提交的级联事实。
+// 凭据/模型/授权的删除经外键级联直接删分组成员行, 事后无从查询"曾经挂载过",
+// 因此受影响分组必须在事务内快照得出; 缓存刷新失败时这是唯一可信的校正依据。
+type ChannelMutation struct {
+	GroupDeltas []GroupMembersDelta // 成员集合实际变化的分组及其存活成员。
+}
+
+// PostCommitError 表示事务已提交、但提交后的缓存刷新失败: 库内级联不可回滚,
+// 调用方必须先用 Mutation 携带的提交事实校正路由, 再把错误上报给界面。
+type PostCommitError struct {
+	RefreshErr error            // 提交后刷新失败的原因。
+	Mutation   *ChannelMutation // 已提交的级联事实。
+}
+
+func (e *PostCommitError) Error() string {
+	return fmt.Sprintf("channel change committed but cache refresh failed: %v", e.RefreshErr)
+}
+
+// Unwrap 使调用方仍可按原错误类型检视刷新失败原因。
+func (e *PostCommitError) Unwrap() error { return e.RefreshErr }
+
+// channelGroupMembersSnapshot 在事务内读取该渠道全部授权当前挂载的分组成员(组 ID → 成员 ID 集合)。
+// 必须在删除级联发生前调用: 行被级联删除后便无从得知分组曾经挂载过哪些成员。
+func channelGroupMembersSnapshot(tx *gorm.DB, channelID int) (map[int]map[int]struct{}, error) {
+	type groupItemRef struct {
+		GroupID int
+		ID      int
+	}
+	var refs []groupItemRef
+	if err := tx.Model(&model.GroupItem{}).
+		Joins("JOIN channel_grants ON channel_grants.id = group_items.channel_grant_id").
+		Joins("JOIN channel_models ON channel_models.id = channel_grants.channel_model_id").
+		Where("channel_models.channel_id = ?", channelID).
+		Select("group_items.group_id AS group_id, group_items.id AS id").
+		Scan(&refs).Error; err != nil {
+		return nil, fmt.Errorf("failed to snapshot group members: %w", err)
+	}
+	snapshot := make(map[int]map[int]struct{})
+	for _, ref := range refs {
+		if snapshot[ref.GroupID] == nil {
+			snapshot[ref.GroupID] = make(map[int]struct{})
+		}
+		snapshot[ref.GroupID][ref.ID] = struct{}{}
+	}
+	return snapshot, nil
+}
+
+// committedChannelMutationFromTx 在事务内由"本渠道删除前后快照"得出提交事实。
+// 受影响分组 = 快照中丢失了成员的分组; 其存活成员按分组全量重查(含其他渠道的成员),
+// 供路由状态按完整最新成员集合修剪, 而不是只看本渠道的残留。无成员变化时返回 nil。
+func committedChannelMutationFromTx(tx *gorm.DB, before, channelAfter map[int]map[int]struct{}) (*ChannelMutation, error) {
+	affected := make([]int, 0, len(before))
+	for groupID, beforeItems := range before {
+		afterItems := channelAfter[groupID]
+		for itemID := range beforeItems {
+			if _, ok := afterItems[itemID]; !ok {
+				affected = append(affected, groupID)
+				break
+			}
+		}
+	}
+	if len(affected) == 0 {
+		return nil, nil
+	}
+	var survivors []model.GroupItem
+	if err := tx.Where("group_id IN ?", affected).Find(&survivors).Error; err != nil {
+		return nil, fmt.Errorf("failed to load surviving group members: %w", err)
+	}
+	byGroup := make(map[int][]int, len(affected))
+	for _, item := range survivors {
+		byGroup[item.GroupID] = append(byGroup[item.GroupID], item.ID)
+	}
+	deltas := make([]GroupMembersDelta, 0, len(affected))
+	for _, groupID := range affected {
+		sort.Ints(byGroup[groupID])
+		deltas = append(deltas, GroupMembersDelta{GroupID: groupID, ItemIDs: byGroup[groupID]})
+	}
+	sort.Slice(deltas, func(i, j int) bool { return deltas[i].GroupID < deltas[j].GroupID })
+	return &ChannelMutation{GroupDeltas: deltas}, nil
+}
+
+// refreshGroupsAfterCommit 是提交后的分组缓存刷新钩子; 声明为包内变量仅为测试注入提交后失败,
+// 生产恒为 groupRefreshCache。提交后的失败一律包装成 PostCommitError 携带提交事实。
+var refreshGroupsAfterCommit = groupRefreshCache
+
 // ChannelCreate 创建渠道及其凭据, 模型与授权, 返回创建后的完整配置。
 // 三者在同一事务内落库: 授权按名称引用两侧, 待凭据与模型拿到主键后由 syncChannelGrants 解析,
 // 由此建一个带授权的渠道只需一趟请求。
@@ -87,18 +178,26 @@ func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 	return &created, nil
 }
 
-// ChannelUpdate 按提交的完整配置整体替换渠道及其凭据, 模型与授权, 返回刷新后的配置。
+// ChannelUpdate 按提交的完整配置整体替换渠道及其凭据, 模型与授权, 返回刷新后的配置与提交事实。
 // 提交即全量而非按字段比对增量: 渠道是人工编辑的十几个字段, 表单本就一次给出完整配置,
 // 未列出的凭据与模型会被删除并级联删除其授权。
-func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.ChannelDetail, error) {
+// 提交前失败返回 nil 事实(未产生任何库变更); 提交成功但缓存刷新失败返回 *PostCommitError,
+// 其 Mutation 携带级联删除的分组影响, 调用方必须据此校正路由后再报错。
+func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.ChannelDetail, *ChannelMutation, error) {
 	if _, ok := channelCache.Get(detail.ID); !ok {
-		return nil, fmt.Errorf("channel not found")
+		return nil, nil, fmt.Errorf("channel not found")
 	}
 	if err := normalizeChannelDetail(detail); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	var mutation *ChannelMutation
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 级联影响必须在删除发生前快照: 提交后唯一可信的校正依据。
+		before, err := channelGroupMembersSnapshot(tx, detail.ID)
+		if err != nil {
+			return err
+		}
 		// 逐列点名而不整行覆盖: 全量提交下 enabled 置假与被清空的可选字段都必须落库, 按零值跳过会写不进去;
 		// 而统计列由转发累加, 不在提交范围内, 整行覆盖会把它抹回提交时的旧值。
 		if err := tx.Model(&model.Channel{}).Where("id = ?", detail.ID).
@@ -108,9 +207,17 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 			Updates(&model.Channel{ChannelConfig: detail.ChannelConfig}).Error; err != nil {
 			return fmt.Errorf("failed to update channel: %w", err)
 		}
-		return syncChannelChildren(tx, detail.ID, detail)
+		if err := syncChannelChildren(tx, detail.ID, detail); err != nil {
+			return err
+		}
+		after, err := channelGroupMembersSnapshot(tx, detail.ID)
+		if err != nil {
+			return err
+		}
+		mutation, err = committedChannelMutationFromTx(tx, before, after)
+		return err
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// 缓存条目由提交的配置重建, 统计从原条目搬过来: 它含本轮尚未落库的累加, 比库内的行更新。
@@ -123,14 +230,18 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 	channelStatsNeedUpdateLock.Unlock()
 
 	// 凭据, 模型与授权的增删都会改变可选路由集合, 重载该渠道的三类缓存并刷新分组。
+	// 两步都发生在提交之后: 失败只能暴露错误并携带提交事实, 不得吞掉已发生的级联删除。
 	if err := reloadChannelChildren(ctx, detail.ID); err != nil {
-		return nil, err
+		return nil, mutation, &PostCommitError{RefreshErr: err, Mutation: mutation}
 	}
-	if err := groupRefreshCache(ctx); err != nil {
-		return nil, fmt.Errorf("failed to refresh groups: %w", err)
+	if err := refreshGroupsAfterCommit(ctx); err != nil {
+		return nil, mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to refresh groups: %w", err),
+			Mutation:   mutation,
+		}
 	}
 	updated := channelDetail(channel)
-	return &updated, nil
+	return &updated, mutation, nil
 }
 
 // normalizeChannelConfig 补齐提交配置中的默认值并校验协议路径。
@@ -226,12 +337,18 @@ func ChannelEnabled(id int, enabled bool, ctx context.Context) error {
 }
 
 // ChannelDel 删除渠道及其凭据, 模型与渠道授权, 关联分组项由数据库外键级联删除。
-func ChannelDel(id int, ctx context.Context) error {
+// 返回值语义与 ChannelUpdate 相同: 提交前失败无提交事实, 提交后刷新失败返回 *PostCommitError。
+func ChannelDel(id int, ctx context.Context) (*ChannelMutation, error) {
 	if _, ok := channelCache.Get(id); !ok {
-		return fmt.Errorf("channel not found")
+		return nil, fmt.Errorf("channel not found")
 	}
 	grantIDs := channelGrantIDs(id)
+	var mutation *ChannelMutation
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		before, err := channelGroupMembersSnapshot(tx, id)
+		if err != nil {
+			return err
+		}
 		if len(grantIDs) > 0 {
 			if err := clearActiveItems(tx, grantIDs); err != nil {
 				return err
@@ -240,9 +357,11 @@ func ChannelDel(id int, ctx context.Context) error {
 		if err := tx.Delete(&model.Channel{}, id).Error; err != nil {
 			return fmt.Errorf("failed to delete channel: %w", err)
 		}
-		return nil
-	}); err != nil {
+		// 渠道已删, 其授权挂载的成员必然全失; 存活成员按受影响分组全量重查。
+		mutation, err = committedChannelMutationFromTx(tx, before, nil)
 		return err
+	}); err != nil {
+		return nil, err
 	}
 
 	channelStatsNeedUpdateLock.Lock()
@@ -269,10 +388,13 @@ func ChannelDel(id int, ctx context.Context) error {
 	channelModelStatsNeedUpdateLock.Unlock()
 
 	channelGrantCache.Del(grantIDs...)
-	if err := groupRefreshCache(ctx); err != nil {
-		return fmt.Errorf("failed to refresh groups: %w", err)
+	if err := refreshGroupsAfterCommit(ctx); err != nil {
+		return mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to refresh groups: %w", err),
+			Mutation:   mutation,
+		}
 	}
-	return nil
+	return mutation, nil
 }
 
 // ChannelGet 返回指定渠道的缓存副本, 供转发按地址, 路径与代理构造上游请求。

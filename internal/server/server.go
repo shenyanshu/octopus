@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/bestruirui/octopus/internal/conf"
 	_ "github.com/bestruirui/octopus/internal/server/handlers"
@@ -49,6 +51,19 @@ func Start() error {
 	return nil
 }
 
+// serverShutdownTimeout 是停机时等待在途请求结束的时间预算。
+// SSE 长连接在预算内不会自行结束, 预算耗尽后回退强制关闭全部连接, 保证停机总有界。
+const serverShutdownTimeout = 5 * time.Second
+
+// Close 停止接收新连接并等待在途请求结束, 超时后强制关闭剩余连接。
+// 用 Shutdown 而非直接 Close: 后续的评分收尾依赖在途请求的成败记账已经发生,
+// 直接 Close 会立刻掐断连接, 让记账与最终落库产生竞态;
+// 超过预算仍无法结束的请求(如超长流式响应)强制关闭, 其最终记账丢失, 与既有停机语义一致。
 func Close() error {
-	return httpSrv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	defer cancel()
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		return httpSrv.Close()
+	}
+	return nil
 }

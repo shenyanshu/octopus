@@ -61,13 +61,74 @@ func RouteStateOf(group model.Group) RouteState {
 	return state
 }
 
-// ResetRouteState 丢弃分组的进程内路由状态, 用于分组切换选择模式或被删除。
-// 不丢弃的话冷却与亲和会在 failover 切到 manual 再切回来之后复活并继续影响选路, 分组删除后其状态也会永久残留。
+// ResetRouteState 丢弃分组的进程内路由状态, 用于分组被删除。
+// 不丢弃的话冷却与亲和会在 failover 切到 manual 再切回来之后复活并继续影响选路, 分组删除后其状态也会永久残留;
+// 分组删除同时意味着成员身份消亡, 评分随之一并丢弃, 不存在任何保留场景。
 func ResetRouteState(groupID int) {
 	routeMu.Lock()
 	defer routeMu.Unlock()
 
 	delete(routes, groupID)
+}
+
+// RebuildRouteState 丢弃分组的瞬态路由状态但保留评分, 用于分组切换选择模式。
+// 切模使旧路由代数失效: 切换前在途请求的迟到结果不得写回重建后的状态;
+// 现任成员、冷却、探测与亲和都是模式相关的瞬态语义, 一并作废;
+// 评分是成员健康度的累积、与模式无关, 原样保留(含尚未落库的最新值), 切回评分模式即恢复。
+// 非评分模式下保留的评分不参与选路, 仅为切回时恢复。
+func RebuildRouteState(groupID int) {
+	routeMu.Lock()
+	defer routeMu.Unlock()
+
+	route := routes[groupID]
+	if route == nil {
+		return
+	}
+	route.CurrentItemID = 0
+	route.ProbeItemID = 0
+	route.AffinityUntil = 0
+	route.affinityArmed = false
+	route.Cooldowns = make(map[int]int64)
+	route.epoch = routeEpochSeq.Add(1)
+}
+
+// PruneRouteMembers 按最新成员集合校正分组路由状态, 供所有会删除成员的变更入口调用
+// (分组成员整体替换、渠道删除或渠道配置变更经外键级联删除成员)。
+// 保留成员的评分原样保留(含未落库值), 被删成员的评分与瞬态引用一并清理;
+// 路由代数必须无条件前进: 在途请求的迟到结果不得把已删成员写回评分表或弄脏落库集合,
+// 即使该成员尚无评分条目也要靠代数挡住。
+// 调用方必须仅在确有成员被删除时调用: 代数前进会丢弃该分组全部在途结果, 误报会白白丢失合法迟到记账。
+func PruneRouteMembers(groupID int, itemIDs []int) {
+	routeMu.Lock()
+	defer routeMu.Unlock()
+
+	route := routes[groupID]
+	if route == nil {
+		return
+	}
+	present := make(map[int]bool, len(itemIDs))
+	for _, id := range itemIDs {
+		present[id] = true
+	}
+	for itemID := range route.Scores {
+		if !present[itemID] {
+			delete(route.Scores, itemID)
+		}
+	}
+	for itemID := range route.Cooldowns {
+		if !present[itemID] {
+			delete(route.Cooldowns, itemID)
+		}
+	}
+	if route.ProbeItemID != 0 && !present[route.ProbeItemID] {
+		route.ProbeItemID = 0
+	}
+	if route.CurrentItemID != 0 && !present[route.CurrentItemID] {
+		route.CurrentItemID = 0
+		route.AffinityUntil = 0
+		route.affinityArmed = false
+	}
+	route.epoch = routeEpochSeq.Add(1)
 }
 
 // pickGroupItem 按分组模式选择本轮目标成员, 没有可用成员时返回零值; group.Items 已按 Priority 升序排列。

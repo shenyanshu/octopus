@@ -69,6 +69,47 @@ func GroupGetByName(name string) (model.Group, error) {
 	return groupSnapshot(group), nil
 }
 
+// ApplyGroupMemberDeltas 把渠道提交的成员存活事实套用到分组缓存。
+// 提交后刷新失败时缓存已陈旧: 不校正的话, 下一次请求会从陈旧缓存里选到已删成员。
+// 只动受影响分组, 存活成员条目原样保留; 事实来自事务内已提交读, 此处不再查库。
+func ApplyGroupMemberDeltas(deltas []GroupMembersDelta) {
+	for _, delta := range deltas {
+		group, ok := groupCache.Get(delta.GroupID)
+		if !ok {
+			continue
+		}
+		survivors := make([]model.GroupItem, 0, len(delta.ItemIDs))
+		for _, item := range group.Items {
+			for _, id := range delta.ItemIDs {
+				if item.ID == id {
+					survivors = append(survivors, item)
+					break
+				}
+			}
+		}
+		group.Items = survivors
+		groupCache.Set(group.ID, group)
+	}
+}
+
+// GroupItemUpdateScores 批量落库分组成员的评分分数, 供 Relay 的后台落库调用。
+// 只做 UPDATE 不做插入: 待写成员的行已被删除时本批影响 0 行, 已删成员不得经由落库复活;
+// 整批放进一个事务, 部分失败整体回滚, 由调用方重新标记后按最新分数重试。
+// ctx 让事务内每条语句继承调用方的取消与超时: 挂起的库调用不得无限占用落库串行锁。
+func GroupItemUpdateScores(ctx context.Context, scores map[int]int) error {
+	if len(scores) == 0 {
+		return nil
+	}
+	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for itemID, score := range scores {
+			if err := tx.Model(&model.GroupItem{}).Where("id = ?", itemID).Update("score", score).Error; err != nil {
+				return fmt.Errorf("failed to update group item %d score: %w", itemID, err)
+			}
+		}
+		return nil
+	})
+}
+
 // GroupCreate 创建分组及其成员并刷新缓存, 返回创建后的分组。
 // 成员的提交顺序即优先级顺序。
 func GroupCreate(req *model.GroupCreateRequest, ctx context.Context) (*model.Group, error) {
