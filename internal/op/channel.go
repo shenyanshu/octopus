@@ -62,15 +62,18 @@ func ChannelStatsList() []model.ChannelStats {
 
 // GroupMembersDelta 描述一次已提交的渠道变更对单个分组成员集合的净影响。
 type GroupMembersDelta struct {
-	GroupID int   // 成员集合发生变化的分组。
-	ItemIDs []int // 提交后该分组仍存活的成员主键, 供路由状态按最新成员校正。
+	GroupID    int               // 成员集合发生变化的分组。
+	ItemIDs    []int             // 提交后该分组仍存活的成员主键(含本次新增), 供路由状态按最新成员校正。
+	AddedItems []model.GroupItem // 本次事务新增成员的完整行, 供缓存刷新失败时补发; 纯删除时为空。
+	Removed    bool              // 是否有成员被删除; 纯新增不得前进路由代数, 免得误丢无关在途记账。
 }
 
 // ChannelMutation 汇集渠道写操作已提交的级联事实。
 // 凭据/模型/授权的删除经外键级联直接删分组成员行, 事后无从查询"曾经挂载过",
 // 因此受影响分组必须在事务内快照得出; 缓存刷新失败时这是唯一可信的校正依据。
+// 自动补充规则经渠道写路径新增成员同样在此携带: 添加与删除共用同一份事实, 不另立平行框架。
 type ChannelMutation struct {
-	GroupDeltas []GroupMembersDelta // 成员集合实际变化的分组及其存活成员。
+	GroupDeltas []GroupMembersDelta // 成员集合实际变化的分组及其存活成员与新增行。
 }
 
 // PostCommitError 表示事务已提交、但提交后的缓存刷新失败: 库内级联不可回滚,
@@ -113,19 +116,49 @@ func channelGroupMembersSnapshot(tx *gorm.DB, channelID int) (map[int]map[int]st
 	return snapshot, nil
 }
 
-// committedChannelMutationFromTx 在事务内由"本渠道删除前后快照"得出提交事实。
-// 受影响分组 = 快照中丢失了成员的分组; 其存活成员按分组全量重查(含其他渠道的成员),
-// 供路由状态按完整最新成员集合修剪, 而不是只看本渠道的残留。无成员变化时返回 nil。
+// committedChannelMutationFromTx 在事务内由"本渠道变更前后快照"得出提交事实。
+// 受影响分组 = 快照中成员集合发生增删的分组; 其存活成员按分组全量重查(含其他渠道的成员),
+// 供路由状态按完整最新成员集合修剪, 而不是只看本渠道的残留。
+// 新增侧携带完整成员行: 刷新失败时缓存无从查到这些行, 提交事实是唯一来源。
+// 无成员变化时返回 nil。
 func committedChannelMutationFromTx(tx *gorm.DB, before, channelAfter map[int]map[int]struct{}) (*ChannelMutation, error) {
-	affected := make([]int, 0, len(before))
+	type groupChange struct {
+		removed bool
+		added   []int
+	}
+	changes := make(map[int]*groupChange)
+	touch := func(groupID int) *groupChange {
+		if changes[groupID] == nil {
+			changes[groupID] = &groupChange{}
+		}
+		return changes[groupID]
+	}
 	for groupID, beforeItems := range before {
 		afterItems := channelAfter[groupID]
 		for itemID := range beforeItems {
 			if _, ok := afterItems[itemID]; !ok {
-				affected = append(affected, groupID)
+				touch(groupID).removed = true
 				break
 			}
 		}
+	}
+	for groupID, afterItems := range channelAfter {
+		for itemID := range afterItems {
+			// before 缺失该分组时索引得 nil map, 单一判定即覆盖两种情况。
+			if _, ok := before[groupID][itemID]; !ok {
+				touch(groupID).added = append(touch(groupID).added, itemID)
+			}
+		}
+	}
+	if len(changes) == 0 {
+		return nil, nil
+	}
+	affected := make([]int, 0, len(changes))
+	for groupID, change := range changes {
+		if !change.removed && len(change.added) == 0 {
+			continue
+		}
+		affected = append(affected, groupID)
 	}
 	if len(affected) == 0 {
 		return nil, nil
@@ -134,6 +167,20 @@ func committedChannelMutationFromTx(tx *gorm.DB, before, channelAfter map[int]ma
 	if err := tx.Where("group_id IN ?", affected).Find(&survivors).Error; err != nil {
 		return nil, fmt.Errorf("failed to load surviving group members: %w", err)
 	}
+	addedIDs := make([]int, 0)
+	for _, change := range changes {
+		addedIDs = append(addedIDs, change.added...)
+	}
+	var addedRows []model.GroupItem
+	if len(addedIDs) > 0 {
+		if err := tx.Where("id IN ?", addedIDs).Find(&addedRows).Error; err != nil {
+			return nil, fmt.Errorf("failed to load added group members: %w", err)
+		}
+	}
+	addedByGroup := make(map[int][]model.GroupItem)
+	for _, item := range addedRows {
+		addedByGroup[item.GroupID] = append(addedByGroup[item.GroupID], item)
+	}
 	byGroup := make(map[int][]int, len(affected))
 	for _, item := range survivors {
 		byGroup[item.GroupID] = append(byGroup[item.GroupID], item.ID)
@@ -141,7 +188,15 @@ func committedChannelMutationFromTx(tx *gorm.DB, before, channelAfter map[int]ma
 	deltas := make([]GroupMembersDelta, 0, len(affected))
 	for _, groupID := range affected {
 		sort.Ints(byGroup[groupID])
-		deltas = append(deltas, GroupMembersDelta{GroupID: groupID, ItemIDs: byGroup[groupID]})
+		sort.Slice(addedByGroup[groupID], func(i, j int) bool {
+			return addedByGroup[groupID][i].ID < addedByGroup[groupID][j].ID
+		})
+		deltas = append(deltas, GroupMembersDelta{
+			GroupID:    groupID,
+			ItemIDs:    byGroup[groupID],
+			AddedItems: addedByGroup[groupID],
+			Removed:    changes[groupID].removed,
+		})
 	}
 	sort.Slice(deltas, func(i, j int) bool { return deltas[i].GroupID < deltas[j].GroupID })
 	return &ChannelMutation{GroupDeltas: deltas}, nil
@@ -151,31 +206,55 @@ func committedChannelMutationFromTx(tx *gorm.DB, before, channelAfter map[int]ma
 // 生产恒为 groupRefreshCache。提交后的失败一律包装成 PostCommitError 携带提交事实。
 var refreshGroupsAfterCommit = groupRefreshCache
 
-// ChannelCreate 创建渠道及其凭据, 模型与授权, 返回创建后的完整配置。
+// ChannelCreate 创建渠道及其凭据, 模型与授权, 返回创建后的完整配置与提交事实。
 // 三者在同一事务内落库: 授权按名称引用两侧, 待凭据与模型拿到主键后由 syncChannelGrants 解析,
 // 由此建一个带授权的渠道只需一趟请求。
-func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.ChannelDetail, error) {
+// 启用自动补充规则的分组在同一事务内补入本渠道匹配授权: 失败整体回滚, 不发布缓存与 SSE;
+// 提交后刷新失败与 ChannelUpdate 同语义, 返回 *PostCommitError 携带提交事实。
+func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.ChannelDetail, *ChannelMutation, error) {
 	if err := normalizeChannelDetail(detail); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	channel := model.Channel{ChannelConfig: detail.ChannelConfig}
+	var mutation *ChannelMutation
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&channel).Error; err != nil {
 			return fmt.Errorf("failed to create channel: %w", err)
 		}
-		return syncChannelChildren(tx, channel.ID, detail)
+		if err := syncChannelChildren(tx, channel.ID, detail); err != nil {
+			return err
+		}
+		// 补齐必须在 tx 内: 此刻缓存还看不到新渠道的授权与启用状态。
+		if err := supplementGroupsForChannel(tx, channel.ID); err != nil {
+			return err
+		}
+		after, err := channelGroupMembersSnapshot(tx, channel.ID)
+		if err != nil {
+			return err
+		}
+		mutation, err = committedChannelMutationFromTx(tx, nil, after)
+		return err
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	channelCache.Set(channel.ID, channel)
 	// 凭据, 模型与授权的主键都在事务内分配, 此刻只在库里; 重载子表缓存以让授权候选与转发都能查到。
 	if err := reloadChannelChildren(ctx, channel.ID); err != nil {
-		return nil, err
+		return nil, mutation, &PostCommitError{RefreshErr: err, Mutation: mutation}
+	}
+	// 新渠道可能给规则分组补了成员: 提交后刷新分组缓存, 失败时由调用方按事实校正。
+	if mutation != nil {
+		if err := refreshGroupsAfterCommit(ctx); err != nil {
+			return nil, mutation, &PostCommitError{
+				RefreshErr: fmt.Errorf("failed to refresh groups: %w", err),
+				Mutation:   mutation,
+			}
+		}
 	}
 	created := channelDetail(channel)
-	return &created, nil
+	return &created, mutation, nil
 }
 
 // ChannelUpdate 按提交的完整配置整体替换渠道及其凭据, 模型与授权, 返回刷新后的配置与提交事实。
@@ -208,6 +287,11 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 			return fmt.Errorf("failed to update channel: %w", err)
 		}
 		if err := syncChannelChildren(tx, detail.ID, detail); err != nil {
+			return err
+		}
+		// 模型/凭据/授权与启用状态已在本事务内定稿: 规则分组的补齐经 tx 看到的即是这些最新状态;
+		// 渠道被本轮禁用时 enabled 过滤天然无匹配, 禁用路径无新增。
+		if err := supplementGroupsForChannel(tx, detail.ID); err != nil {
 			return err
 		}
 		after, err := channelGroupMembersSnapshot(tx, detail.ID)
@@ -322,18 +406,48 @@ func syncChannelChildren(tx *gorm.DB, channelID int, detail *model.ChannelDetail
 	return syncChannelGrants(tx, channelID, detail.Grants)
 }
 
-// ChannelEnabled 更新渠道启用状态。
-func ChannelEnabled(id int, enabled bool, ctx context.Context) error {
+// ChannelEnabled 更新渠道启用状态, 并在启用路径补齐规则分组新增成员。
+// 启用使本渠道授权重新可选: 规则分组在原事务内补入此刻匹配的授权; 禁用无新增。
+// 提交事实语义与 ChannelUpdate 一致: 提交后刷新失败返回 *PostCommitError 携带提交事实。
+func ChannelEnabled(id int, enabled bool, ctx context.Context) (*ChannelMutation, error) {
 	channel, ok := channelCache.Get(id)
 	if !ok {
-		return fmt.Errorf("channel not found")
+		return nil, fmt.Errorf("channel not found")
 	}
-	if err := db.GetDB().WithContext(ctx).Model(&model.Channel{}).Where("id = ?", id).Update("enabled", enabled).Error; err != nil {
+	var mutation *ChannelMutation
+	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		before, err := channelGroupMembersSnapshot(tx, id)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Channel{}).Where("id = ?", id).Update("enabled", enabled).Error; err != nil {
+			return fmt.Errorf("failed to update channel enabled: %w", err)
+		}
+		// 补齐经 tx: 复核必须看到本轮更新后的 enabled, 缓存仍是旧值会漏掉刚启用的渠道。
+		if err := supplementGroupsForChannel(tx, id); err != nil {
+			return err
+		}
+		after, err := channelGroupMembersSnapshot(tx, id)
+		if err != nil {
+			return err
+		}
+		mutation, err = committedChannelMutationFromTx(tx, before, after)
 		return err
+	}); err != nil {
+		return nil, err
 	}
+
 	channel.Enabled = enabled
 	channelCache.Set(id, channel)
-	return nil
+	if mutation != nil {
+		if err := refreshGroupsAfterCommit(ctx); err != nil {
+			return mutation, &PostCommitError{
+				RefreshErr: fmt.Errorf("failed to refresh groups: %w", err),
+				Mutation:   mutation,
+			}
+		}
+	}
+	return mutation, nil
 }
 
 // ChannelDel 删除渠道及其凭据, 模型与渠道授权, 关联分组项由数据库外键级联删除。

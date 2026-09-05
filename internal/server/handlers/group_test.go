@@ -397,9 +397,9 @@ func TestReconcileChannelMutationOnPostCommitFailure(t *testing.T) {
 		t.Fatalf("读分组失败: %v", err)
 	}
 
-	// 模拟 op 在提交后刷新失败时交出的提交事实: 目标分组仅剩成员 B。
+	// 模拟 op 在提交后刷新失败时交出的提交事实: 目标分组仅剩成员 B, 确有删除故 Removed 为真。
 	reconcileChannelMutation(&op.ChannelMutation{
-		GroupDeltas: []op.GroupMembersDelta{{GroupID: targetGroup.ID, ItemIDs: []int{itemB}}},
+		GroupDeltas: []op.GroupMembersDelta{{GroupID: targetGroup.ID, ItemIDs: []int{itemB}, Removed: true}},
 	})
 	assertCascadeReconciled(t, target, bystander, itemA, itemC)
 }
@@ -423,7 +423,7 @@ func TestPostCommitCacheReconcileKeepsSelectionOffDeletedMember(t *testing.T) {
 	}
 
 	reconcileChannelMutation(&op.ChannelMutation{
-		GroupDeltas: []op.GroupMembersDelta{{GroupID: targetGroup.ID, ItemIDs: []int{itemB}}},
+		GroupDeltas: []op.GroupMembersDelta{{GroupID: targetGroup.ID, ItemIDs: []int{itemB}, Removed: true}},
 	})
 
 	prunedGroup, err := op.GroupGetByName(target)

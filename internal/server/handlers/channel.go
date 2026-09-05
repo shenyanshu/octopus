@@ -19,6 +19,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/charmbracelet/log"
 	"github.com/dlclark/regexp2"
 	"github.com/gin-gonic/gin"
 )
@@ -38,6 +39,10 @@ func init() {
 		AddRoute(
 			router.NewRoute("/grants", http.MethodGet).
 				Handle(listChannelGrant),
+		).
+		AddRoute(
+			router.NewRoute("/grants/preview", http.MethodPost).
+				Handle(previewChannelGrants),
 		).
 		AddRoute(
 			router.NewRoute("/create", http.MethodPost).
@@ -97,7 +102,10 @@ func createChannel(c *gin.Context) {
 	// 新建渠道可能被现有分组成员引用(授权引用渠道), 与 Forward 复核的读路径共享锁。
 	relay.GroupGateLock()
 	defer relay.GroupGateUnlock()
-	channel, err := op.ChannelCreate(&req, c.Request.Context())
+	channel, mutation, err := op.ChannelCreate(&req, c.Request.Context())
+	// 已提交事实先校正缓存与路由, 再按受影响分组发布 SSE, 最后上报错误;
+	// 提交前失败 mutation 为 nil, 无事可校正也无事件可发。整个序列在 groupGate 写锁内。
+	processChannelMutation(mutation)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -123,11 +131,12 @@ func updateChannel(c *gin.Context) {
 	// 使 Forward 选路后的复核读到最新已发布状态, 避免级联删除的旧缓存穿透。
 	relay.GroupGateLock()
 	defer relay.GroupGateUnlock()
-	// 渠道全量替换会删除未列出的凭据、模型与授权, 经外键级联删除分组成员。
-	// 提交前失败时 mutation 为 nil, 无从也无需校正; 提交后失败(缓存刷新失败)时携带提交事实,
-	// 级联删除不可回滚, 必须先按事实校正路由再报错, 否则在途请求会把已删成员写回评分表。
+	// 渠道全量替换会删除未列出的凭据、模型与授权, 经外键级联删除分组成员;
+	// 启用自动补充规则的分组在同一事务内补入本渠道匹配授权, mutation 同时携带新增与删除两类事实。
+	// 提交前失败 mutation 为 nil, 无从也无需校正; 提交后失败(缓存刷新失败)时携带提交事实,
+	// 级联删除不可回滚, 必须先按事实校正路由并发布事件再报错, 否则已打开客户端会等到下次拉取才对齐。
 	channel, mutation, err := op.ChannelUpdate(&req, c.Request.Context())
-	reconcileChannelMutation(mutation)
+	processChannelMutation(mutation)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -155,7 +164,10 @@ func enableChannel(c *gin.Context) {
 	// 渠道启停直接影响成员 Available, 与 Forward 复核的读路径共享锁使状态发布线性化。
 	relay.GroupGateLock()
 	defer relay.GroupGateUnlock()
-	if err := op.ChannelEnabled(request.ID, request.Enabled, c.Request.Context()); err != nil {
+	mutation, err := op.ChannelEnabled(request.ID, request.Enabled, c.Request.Context())
+	// 已提交事实先校正缓存与路由, 再发布 SSE, 最后上报错误; 与 create/update 同一编排。
+	processChannelMutation(mutation)
+	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -173,7 +185,8 @@ func deleteChannel(c *gin.Context) {
 	defer relay.GroupGateUnlock()
 	// 删除渠道会经外键级联删除其授权与引用它的分组成员; mutation 语义与更新入口相同。
 	mutation, err := op.ChannelDel(id, c.Request.Context())
-	reconcileChannelMutation(mutation)
+	// 已提交事实先校正缓存与路由, 再按受影响分组发布 SSE, 最后上报错误; 与 create/update/enable 同一编排。
+	processChannelMutation(mutation)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -185,6 +198,16 @@ func deleteChannel(c *gin.Context) {
 	resp.Success(c, nil)
 }
 
+// processChannelMutation 是渠道写操作 mutation 的统一编排:
+// 先按提交事实校正缓存与路由, 再按受影响分组发布 SSE。
+// 所有渠道 handler(create/update/enable/delete)在拿到 op 返回的 mutation 后调用本函数,
+// 使"已提交即通知"这一契约不依赖客户端重连 —— 提交前失败 mutation 为 nil 时无事可校正也无事件可发。
+// 必须在 groupGate 写锁内调用: 校正与发布共享缓存与路由状态。
+func processChannelMutation(mutation *op.ChannelMutation) {
+	reconcileChannelMutation(mutation)
+	publishGroupMutationEvent(mutation)
+}
+
 // reconcileChannelMutation 按渠道写操作已提交的级联事实精确校正受影响分组的路由状态。
 // 只动成员集合实际变化的分组, 未受影响的分组不前进代数, 免得误丢其合法的迟到记账。
 func reconcileChannelMutation(mutation *op.ChannelMutation) {
@@ -192,10 +215,35 @@ func reconcileChannelMutation(mutation *op.ChannelMutation) {
 		return
 	}
 	// 先按提交事实校正分组缓存, 再校正路由状态: 提交后刷新失败时缓存陈旧,
-	// 不校正缓存的话, 下一次请求会从陈旧缓存里选到已删成员。
+	// 不校正缓存的话, 下一次请求会从陈旧缓存里选到已删成员或漏掉新成员。
 	op.ApplyGroupMemberDeltas(mutation.GroupDeltas)
 	for _, delta := range mutation.GroupDeltas {
-		relay.PruneRouteMembers(delta.GroupID, delta.ItemIDs)
+		// 纯新增不前进代数: 路由代数前进会丢弃该分组全部在途结果, 误报会白白丢失合法迟到记账;
+		// 只有确有成员删除时才修剪路由, 新增成员由后续选路自然纳入, 评分/活跃成员一律不动。
+		if delta.Removed {
+			relay.PruneRouteMembers(delta.GroupID, delta.ItemIDs)
+		}
+	}
+}
+
+// publishGroupMutationEvent 为受渠道变更影响的分组发布 changed 事件, 复用现有 SSE 事件不另立协议。
+// handler 已持 GroupGate 写锁: 事件携带的运行状态取自 Relay 与刚校正的分组缓存, 与其他会话对齐到完整成员。
+// GroupGet 读不到时不可静默: 已提交的成员变更不会因读取失败而回滚, 必须带上下文上报而不是吞掉;
+// 此处不重试也不 panic —— 仅记录错误上下文, 事件本身被跳过, 后续校正依赖已发布的缓存校正事实。
+func publishGroupMutationEvent(mutation *op.ChannelMutation) {
+	if mutation == nil {
+		return
+	}
+	for _, delta := range mutation.GroupDeltas {
+		group, err := op.GroupGet(delta.GroupID)
+		if err != nil {
+			// 不写不真实的"并发删除"理由: 读不到就是读不到, 提交已发生不可回滚。
+			// 记录带 groupID 的错误上下文, 让运维可定位为何某受影响组的事件漏发;
+			// 事件本身跳过, 缓存已由 reconcileChannelMutation 校正, 客户端下次拉取即对齐。
+			log.Warnf("publishGroupMutationEvent: skip group %d, group read failed after committed mutation: %v", delta.GroupID, err)
+			continue
+		}
+		publishGroupEvent(groupEvent{Name: "changed", Data: groupResponse{Group: group, Runtime: relay.RouteStateOf(group)}})
 	}
 }
 

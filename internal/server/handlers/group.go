@@ -181,6 +181,11 @@ func createGroup(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// 规则合法性在入口校验: handler 只做错误到状态码的映射, 单一判定口径仍是 model.CompileGroupPattern。
+	if _, err := model.CompileGroupPattern(req.AutoAddPattern); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	// 与 update/delete/toggle 同一写锁: 覆盖 DB→缓存→路由→SSE 发布,
 	// 防止 delete/create ID reuse 时旧 delete cleanup 晚于新 create publication。
 	relay.GroupGateLock()
@@ -208,6 +213,13 @@ func updateGroup(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
+	}
+	// 规则变更时校验: 指针区分"未提交保持不变"与"空串清除", 两者都不判为非法。
+	if req.AutoAddPattern != nil {
+		if _, err := model.CompileGroupPattern(*req.AutoAddPattern); err != nil {
+			resp.Error(c, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	relay.GroupGateLock()
 	defer relay.GroupGateUnlock()

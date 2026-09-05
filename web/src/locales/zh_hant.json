@@ -1,496 +1,509 @@
 {
-    "login": {
-        "username": "使用者名稱",
-        "usernamePlaceholder": "請輸入使用者名稱",
-        "password": "密碼",
-        "passwordPlaceholder": "請輸入密碼",
-        "trustDevice": "信任此裝置",
-        "apikey": "API 金鑰",
-        "apikeyPlaceholder": "請輸入 API 金鑰 (sk-octopus-...)",
-        "mode": {
-            "user": "帳戶登入",
-            "apikey": "金鑰登入"
-        },
-        "error": {
-            "generic": "登入失敗，請檢查登入憑證"
-        },
-        "button": {
-            "loading": "登入中...",
-            "submit": "登入"
-        }
+  "login": {
+    "username": "使用者名稱",
+    "usernamePlaceholder": "請輸入使用者名稱",
+    "password": "密碼",
+    "passwordPlaceholder": "請輸入密碼",
+    "trustDevice": "信任此裝置",
+    "apikey": "API 金鑰",
+    "apikeyPlaceholder": "請輸入 API 金鑰 (sk-octopus-...)",
+    "mode": {
+      "user": "帳戶登入",
+      "apikey": "金鑰登入"
     },
-    "apiKeyDashboard": {
-        "error": "載入資料失敗",
-        "logout": "登出",
-        "requestCount": "請求次數",
-        "timeConsumed": "消耗時間",
-        "totalToken": "消耗詞元",
-        "totalCost": "消耗費用",
-        "inputTokens": "輸入詞元",
-        "inputCost": "輸入費用",
-        "outputTokens": "輸出詞元",
-        "outputCost": "輸出費用",
-        "successRequests": "成功請求",
-        "failedRequests": "失敗請求",
-        "expireAt": "過期時間",
+    "error": {
+      "generic": "登入失敗，請檢查登入憑證"
+    },
+    "button": {
+      "loading": "登入中...",
+      "submit": "登入"
+    }
+  },
+  "apiKeyDashboard": {
+    "error": "載入資料失敗",
+    "logout": "登出",
+    "requestCount": "請求次數",
+    "timeConsumed": "消耗時間",
+    "totalToken": "消耗詞元",
+    "totalCost": "消耗費用",
+    "inputTokens": "輸入詞元",
+    "inputCost": "輸入費用",
+    "outputTokens": "輸出詞元",
+    "outputCost": "輸出費用",
+    "successRequests": "成功請求",
+    "failedRequests": "失敗請求",
+    "expireAt": "過期時間",
+    "neverExpire": "永不過期",
+    "daysLeft": "天後到期",
+    "expired": "已過期",
+    "supportedModels": "支援的模型"
+  },
+  "navbar": {
+    "home": "主頁",
+    "channel": "供應源",
+    "group": "分組",
+    "model": "價格",
+    "log": "日誌",
+    "setting": "設定"
+  },
+  "toolbar": {
+    "hideChannelName": "模糊渠道名稱",
+    "share": "分享",
+    "popover": {
+      "ariaLabel": "檢視選項",
+      "layout": "佈局",
+      "sort": "排序",
+      "grid": "網格",
+      "list": "清單",
+      "nameAsc": "名稱正序",
+      "nameDesc": "名稱倒序",
+      "filter": {
+        "title": "篩選",
+        "channel": {
+          "all": "全部供應源",
+          "enabled": "僅啟用",
+          "disabled": "僅停用"
+        },
+        "group": {
+          "all": "全部分組",
+          "withMembers": "有成員",
+          "empty": "空分組"
+        },
+        "model": {
+          "all": "全部模型",
+          "priced": "已配置價格",
+          "free": "未配置價格"
+        }
+      }
+    }
+  },
+  "common": {
+    "copy": {
+      "success": "複製成功",
+      "failed": "複製失敗",
+      "noContent": "無可複製內容"
+    }
+  },
+  "home": {
+    "metric": {
+      "cost": "金額",
+      "count": "次數",
+      "tokens": "詞元"
+    },
+    "activity": {
+      "requestCount": "請求次數",
+      "waitTime": "消耗時間",
+      "totalToken": "消耗詞元",
+      "totalCost": "消耗費用",
+      "noData": "無數據"
+    },
+    "total": {
+      "requestStats": "請求統計",
+      "totalStats": "全部統計",
+      "inputStats": "輸入統計",
+      "outputStats": "輸出統計",
+      "requestCount": "請求次數",
+      "timeConsumed": "消耗時間",
+      "totalToken": "消耗詞元",
+      "totalCost": "消耗費用",
+      "inputTokens": "輸入詞元",
+      "inputCost": "輸入費用",
+      "outputTokens": "輸出詞元",
+      "outputCost": "輸出費用"
+    },
+    "chart": {
+      "title": "趨勢",
+      "totalRequests": "請求次數",
+      "totalCost": "消費金額",
+      "totalTokens": "詞元消耗",
+      "timePeriod": "時間週期",
+      "period": {
+        "today": "今天",
+        "last7Days": "7天",
+        "last30Days": "30天"
+      }
+    },
+    "rank": {
+      "channel": "渠道",
+      "model": "模型",
+      "noData": "暫無排行數據",
+      "successRate": "成功率"
+    }
+  },
+  "setting": {
+    "appearance": "外觀",
+    "system": "系統",
+    "theme": {
+      "label": "主題",
+      "light": "淺色",
+      "dark": "深色",
+      "system": "跟隨系統"
+    },
+    "language": {
+      "label": "語言",
+      "zh_hans": "簡體中文",
+      "zh_hant": "繁體中文",
+      "en": "English"
+    },
+    "proxyUrl": {
+      "label": "代理位址",
+      "placeholder": "請輸入代理位址"
+    },
+    "statsSaveInterval": {
+      "label": "統計保存週期（分鐘）",
+      "placeholder": "請輸入週期（分鐘）"
+    },
+    "corsAllowOrigins": {
+      "label": "CORS 跨網域白名單",
+      "hint": "為空禁止跨網域，* 允許所有",
+      "example": "只允許指定域名: https://example.com,https://example2.com"
+    },
+    "saved": "已儲存",
+    "backup": {
+      "title": "備份 / 復原",
+      "export": {
+        "button": "匯出",
+        "exporting": "匯出中...",
+        "success": "開始匯出"
+      },
+      "import": {
+        "title": "匯入",
+        "button": "匯入",
+        "importing": "匯入中...",
+        "noFile": "請先選擇 JSON 檔案",
+        "success": "匯入成功",
+        "failed": "匯入失敗",
+        "result": "匯入結果"
+      }
+    },
+    "apiKey": {
+      "title": "API 金鑰",
+      "empty": "暫無 API 金鑰",
+      "add": "新增金鑰",
+      "loadFailed": "載入失敗",
+      "form": {
+        "name": "名稱",
+        "value": "密鑰值",
+        "valuePlaceholder": "留空自動生成",
+        "maxCost": "最大金額",
+        "maxCostPlaceholder": "請輸入金額",
+        "unlimited": "無限制",
+        "expireAt": "過期日期",
+        "selectDate": "選擇日期",
         "neverExpire": "永不過期",
-        "daysLeft": "天後到期",
-        "expired": "已過期",
-        "supportedModels": "支援的模型"
+        "supportedModels": "支援的模型",
+        "noModels": "暫無可選模型",
+        "modelsHint": "不選擇則為無限制",
+        "enabled": "是否啟用",
+        "cancel": "取消",
+        "create": "建立",
+        "save": "儲存",
+        "confirm": "確認"
+      },
+      "stats": {
+        "noData": "暫無統計數據",
+        "inputToken": "輸入詞元",
+        "outputToken": "輸出詞元",
+        "inputCost": "輸入費用",
+        "outputCost": "輸出費用",
+        "requestSuccess": "成功請求",
+        "requestFailed": "失敗請求"
+      },
+      "toast": {
+        "createSuccess": "API 金鑰建立成功",
+        "createError": "API 金鑰建立失敗",
+        "updateSuccess": "API 金鑰更新成功",
+        "updateError": "API 金鑰更新失敗",
+        "deleteSuccess": "API 金鑰刪除成功",
+        "deleteError": "API 金鑰刪除失敗"
+      }
     },
-    "navbar": {
-        "home": "主頁",
-        "channel": "供應源",
-        "group": "分組",
-        "model": "價格",
-        "log": "日誌",
-        "setting": "設定"
+    "llmPrice": {
+      "title": "模型價格",
+      "updateInterval": {
+        "label": "自動更新間隔（小時）",
+        "placeholder": "請輸入間隔（小時）"
+      },
+      "manualUpdate": {
+        "label": "手動更新價格",
+        "button": "立即更新",
+        "updating": "更新中..."
+      },
+      "lastUpdate": "上次更新",
+      "neverUpdated": "從未更新",
+      "updateSuccess": "價格更新成功",
+      "updateFailed": "價格更新失敗",
+      "rebuild": {
+        "label": "重建價格資料",
+        "description": "重新匹配並清理模型價格\n會重置手動設定的價格",
+        "button": "重建",
+        "cancel": "取消",
+        "confirm": "確認重建",
+        "rebuilding": "重建中...",
+        "success": "價格資料重建成功，共處理 {count} 個模型",
+        "failed": "價格資料重建失敗"
+      }
     },
-    "toolbar": {
-        "hideChannelName": "模糊渠道名稱",
-        "share": "分享",
-        "popover": {
-            "ariaLabel": "檢視選項",
-            "layout": "佈局",
-            "sort": "排序",
-            "grid": "網格",
-            "list": "清單",
-            "nameAsc": "名稱正序",
-            "nameDesc": "名稱倒序",
-            "filter": {
-                "title": "篩選",
-                "channel": {
-                    "all": "全部供應源",
-                    "enabled": "僅啟用",
-                    "disabled": "僅停用"
-                },
-                "group": {
-                    "all": "全部分組",
-                    "withMembers": "有成員",
-                    "empty": "空分組"
-                },
-                "model": {
-                    "all": "全部模型",
-                    "priced": "已配置價格",
-                    "free": "未配置價格"
-                }
-            }
-        }
+    "account": {
+      "title": "帳戶設定",
+      "save": "儲存",
+      "saving": "儲存中...",
+      "cancel": "取消",
+      "username": {
+        "label": "修改使用者名稱",
+        "placeholder": "請輸入新使用者名稱",
+        "empty": "使用者名稱不能為空",
+        "success": "使用者名稱修改成功",
+        "failed": "使用者名稱修改失敗"
+      },
+      "password": {
+        "label": "修改密碼",
+        "oldPlaceholder": "請輸入當前密碼",
+        "newPlaceholder": "請輸入新密碼",
+        "confirmPlaceholder": "請確認新密碼",
+        "oldEmpty": "請輸入當前密碼",
+        "newEmpty": "請輸入新密碼",
+        "mismatch": "兩次輸入的密碼不一致",
+        "tooShort": "密碼長度至少為6位",
+        "change": "修改密碼",
+        "success": "密碼修改成功",
+        "failed": "密碼修改失敗"
+      }
     },
-    "common": {
-        "copy": {
-            "success": "複製成功",
-            "failed": "複製失敗",
-            "noContent": "無可複製內容"
-        }
-    },
-    "home": {
-        "metric": {
-            "cost": "金額",
-            "count": "次數",
-            "tokens": "詞元"
-        },
-        "activity": {
-            "requestCount": "請求次數",
-            "waitTime": "消耗時間",
-            "totalToken": "消耗詞元",
-            "totalCost": "消耗費用",
-            "noData": "無數據"
-        },
-        "total": {
-            "requestStats": "請求統計",
-            "totalStats": "全部統計",
-            "inputStats": "輸入統計",
-            "outputStats": "輸出統計",
-            "requestCount": "請求次數",
-            "timeConsumed": "消耗時間",
-            "totalToken": "消耗詞元",
-            "totalCost": "消耗費用",
-            "inputTokens": "輸入詞元",
-            "inputCost": "輸入費用",
-            "outputTokens": "輸出詞元",
-            "outputCost": "輸出費用"
-        },
-        "chart": {
-            "title": "趨勢",
-            "totalRequests": "請求次數",
-            "totalCost": "消費金額",
-            "totalTokens": "詞元消耗",
-            "timePeriod": "時間週期",
-            "period": {
-                "today": "今天",
-                "last7Days": "7天",
-                "last30Days": "30天"
-            }
-        },
-        "rank": {
-            "channel": "渠道",
-            "model": "模型",
-            "noData": "暫無排行數據",
-            "successRate": "成功率"
-        }
-    },
-    "setting": {
-        "appearance": "外觀",
-        "system": "系統",
-        "theme": {
-            "label": "主題",
-            "light": "淺色",
-            "dark": "深色",
-            "system": "跟隨系統"
-        },
-        "language": {
-            "label": "語言",
-            "zh_hans": "簡體中文",
-            "zh_hant": "繁體中文",
-            "en": "English"
-        },
-        "proxyUrl": {
-            "label": "代理位址",
-            "placeholder": "請輸入代理位址"
-        },
-        "statsSaveInterval": {
-            "label": "統計保存週期（分鐘）",
-            "placeholder": "請輸入週期（分鐘）"
-        },
-        "corsAllowOrigins": {
-            "label": "CORS 跨網域白名單",
-            "hint": "為空禁止跨網域，* 允許所有",
-            "example": "只允許指定域名: https://example.com,https://example2.com"
-        },
-        "saved": "已儲存",
-        "backup": {
-            "title": "備份 / 復原",
-            "export": {
-                "button": "匯出",
-                "exporting": "匯出中...",
-                "success": "開始匯出"
-            },
-            "import": {
-                "title": "匯入",
-                "button": "匯入",
-                "importing": "匯入中...",
-                "noFile": "請先選擇 JSON 檔案",
-                "success": "匯入成功",
-                "failed": "匯入失敗",
-                "result": "匯入結果"
-            }
-        },
-        "apiKey": {
-            "title": "API 金鑰",
-            "empty": "暫無 API 金鑰",
-            "add": "新增金鑰",
-            "loadFailed": "載入失敗",
-            "form": {
-                "name": "名稱",
-                "value": "密鑰值",
-                "valuePlaceholder": "留空自動生成",
-                "maxCost": "最大金額",
-                "maxCostPlaceholder": "請輸入金額",
-                "unlimited": "無限制",
-                "expireAt": "過期日期",
-                "selectDate": "選擇日期",
-                "neverExpire": "永不過期",
-                "supportedModels": "支援的模型",
-                "noModels": "暫無可選模型",
-                "modelsHint": "不選擇則為無限制",
-                "enabled": "是否啟用",
-                "cancel": "取消",
-                "create": "建立",
-                "save": "儲存",
-                "confirm": "確認"
-            },
-            "stats": {
-                "noData": "暫無統計數據",
-                "inputToken": "輸入詞元",
-                "outputToken": "輸出詞元",
-                "inputCost": "輸入費用",
-                "outputCost": "輸出費用",
-                "requestSuccess": "成功請求",
-                "requestFailed": "失敗請求"
-            },
-            "toast": {
-                "createSuccess": "API 金鑰建立成功",
-                "createError": "API 金鑰建立失敗",
-                "updateSuccess": "API 金鑰更新成功",
-                "updateError": "API 金鑰更新失敗",
-                "deleteSuccess": "API 金鑰刪除成功",
-                "deleteError": "API 金鑰刪除失敗"
-            }
-        },
-        "llmPrice": {
-            "title": "模型價格",
-            "updateInterval": {
-                "label": "自動更新間隔（小時）",
-                "placeholder": "請輸入間隔（小時）"
-            },
-            "manualUpdate": {
-                "label": "手動更新價格",
-                "button": "立即更新",
-                "updating": "更新中..."
-            },
-            "lastUpdate": "上次更新",
-            "neverUpdated": "從未更新",
-            "updateSuccess": "價格更新成功",
-            "updateFailed": "價格更新失敗",
-            "rebuild": {
-                "label": "重建價格資料",
-                "description": "重新匹配並清理模型價格\n會重置手動設定的價格",
-                "button": "重建",
-                "cancel": "取消",
-                "confirm": "確認重建",
-                "rebuilding": "重建中...",
-                "success": "價格資料重建成功，共處理 {count} 個模型",
-                "failed": "價格資料重建失敗"
-            }
-        },
-        "account": {
-            "title": "帳戶設定",
-            "save": "儲存",
-            "saving": "儲存中...",
-            "cancel": "取消",
-            "username": {
-                "label": "修改使用者名稱",
-                "placeholder": "請輸入新使用者名稱",
-                "empty": "使用者名稱不能為空",
-                "success": "使用者名稱修改成功",
-                "failed": "使用者名稱修改失敗"
-            },
-            "password": {
-                "label": "修改密碼",
-                "oldPlaceholder": "請輸入當前密碼",
-                "newPlaceholder": "請輸入新密碼",
-                "confirmPlaceholder": "請確認新密碼",
-                "oldEmpty": "請輸入當前密碼",
-                "newEmpty": "請輸入新密碼",
-                "mismatch": "兩次輸入的密碼不一致",
-                "tooShort": "密碼長度至少為6位",
-                "change": "修改密碼",
-                "success": "密碼修改成功",
-                "failed": "密碼修改失敗"
-            }
-        },
-        "info": {
-            "title": "版本資訊",
-            "currentVersion": "當前版本",
-            "github": "GitHub 倉庫",
-            "unknown": "未知"
-        },
-        "log": {
-            "title": "日誌設定",
-            "clear": {
-                "label": "清空歷史日誌",
-                "button": "清空",
-                "clearing": "清空中..."
-            },
-            "clearSuccess": "日誌已清空",
-            "clearFailed": "清空失敗"
-        }
-    },
-    "group": {
-        "toast": {
-            "createFailed": "建立失敗",
-            "updated": "更新成功",
-            "updateFailed": "更新失敗",
-            "deleted": "刪除成功"
-        },
-        "create": {
-            "submit": "建立",
-            "submitting": "建立中..."
-        },
-        "card": {
-            "empty": "暫無規則",
-            "activate": "設為活動項",
-            "cooling": "冷卻 {seconds}s",
-            "affinity": "親和 {seconds}s",
-            "score": "評分 {score}"
-        },
-        "detail": {
-            "actions": {
-                "cancel": "取消",
-                "save": "儲存",
-                "confirmDelete": "確認刪除"
-            }
-        },
-        "form": {
-            "name": "分組名稱",
-            "mode": "路由模式",
-            "modeHint": "手動固定選中成員；故障轉移按成員順序並在失敗時切換；評分路由持續使用最高分成員",
-            "manual": "手動",
-            "failover": "故障轉移",
-            "scored": "評分路由",
-            "members": "成員",
-            "relay": "路由策略",
-            "retryCount": "總嘗試次數",
-            "retryCountHint": "單個成員包含首次請求的總嘗試次數",
-            "retryInterval": "重試間隔（秒）",
-            "retryIntervalHint": "同一成員相鄰兩次嘗試的等待時間",
-            "nonStreamTimeout": "非串流逾時（秒）",
-            "nonStreamTimeoutHint": "等待完整非串流回應的最長時間",
-            "streamTimeout": "串流首事件逾時（秒）",
-            "streamTimeoutHint": "等待首個有效串流事件的最長時間",
-            "cooldown": "冷卻時間（秒）",
-            "cooldownHint": "成員重試耗盡後暫停使用的時間",
-            "affinity": "故障切換親和時間（秒）",
-            "affinityHint": "備用成員首次請求成功後繼續使用該成員的時間",
-            "items": "成員順序",
-            "addItem": "新增模型",
-            "autoAdd": "自動新增",
-            "clear": "清空"
-        }
-    },
-    "model": {
-        "create": {
-            "name": "模型名稱",
-            "input": "輸入價格",
-            "output": "輸出價格",
-            "cacheRead": "快取讀取",
-            "cacheWrite": "快取寫入",
-            "cancel": "取消",
-            "submit": "建立",
-            "submitting": "建立中..."
-        },
-        "toast": {
-            "updated": "模型價格已更新",
-            "updateFailed": "更新失敗",
-            "deleted": "模型已刪除",
-            "deleteFailed": "刪除失敗"
-        },
-        "card": {
-            "inputCache": "輸入/快取",
-            "outputCache": "輸出/快取",
-            "edit": "編輯",
-            "delete": "刪除"
-        },
-        "overlay": {
-            "cancel": "取消",
-            "deleting": "刪除中...",
-            "confirmDelete": "確認刪除",
-            "input": "輸入",
-            "output": "輸出",
-            "cacheRead": "快取讀取",
-            "cacheWrite": "快取寫入",
-            "save": "儲存"
-        }
+    "info": {
+      "title": "版本資訊",
+      "currentVersion": "當前版本",
+      "github": "GitHub 倉庫",
+      "unknown": "未知"
     },
     "log": {
-        "list": {
-            "empty": "暫無日誌",
-            "disconnected": "日誌連線已中斷，正在重新連線"
-        },
-        "status": {
-            "committed": "回應中"
-        },
-        "card": {
-            "errorInfo": "錯誤訊息",
-            "unknownModel": "未知模型",
-            "detailUnavailable": "正文內容不可用",
-            "requestContent": "請求體",
-            "group": "分組",
-            "groupUnavailable": "目前請求模型沒有對應分組",
-            "noGroupItems": "目前分組沒有可用供應源",
-            "channelChanged": "供應源已切換",
-            "channelCleared": "已取消供應源選擇",
-            "channelChangeFailed": "供應源切換失敗",
-            "exclude": "排除",
-            "restore": "恢復",
-            "excludeTooltip": "從目前分組排除此供應源，所有路由模式都不會再使用它",
-            "restoreTooltip": "將此供應源恢復到目前分組",
-            "excluded": "已排除",
-            "excludeMember": "從目前分組排除 {name}",
-            "restoreMember": "將 {name} 恢復到目前分組",
-            "memberExcluded": "供應源已從目前分組排除",
-            "memberExcludedDescription": "所有路由模式都不會再使用它",
-            "memberExcludeFailed": "排除供應源失敗",
-            "memberRestored": "供應源已恢復到目前分組",
-            "memberRestoreFailed": "恢復供應源失敗",
-            "undo": "復原",
-            "cancel": "取消",
-            "confirmExclude": "確認排除",
-            "excludeLastWarning": "目前分組將沒有可選成員，新請求會立即失敗",
-            "responseContent": "回應內容",
-            "noRequestContent": "(無請求內容)",
-            "noResponseContent": "(無回應內容)",
-            "tokens": "詞元",
-            "retryIndex": "重試 {index}",
-            "retryDetails": "重試詳情",
-            "stopRound": "停止目前輪次",
-            "stopFailed": "停止目前輪次失敗",
-            "waitingChannelSelection": "正在等待選擇供應源",
-            "waitingResponse": "正在等待上游回應",
-            "responseStreaming": "上游已回應，串流傳輸正在進行"
-        }
-    },
-    "channel": {
-        "card": {
-            "requestCount": "請求次數",
-            "totalCost": "總成本",
-            "model": "模型",
-            "successRequests": "成功請求",
-            "failedRequests": "失敗請求",
-            "toast": {
-                "enabled": "供應源已啟用",
-                "disabled": "供應源已停用"
-            }
-        },
-        "stats": {
-            "totalRequests": "總請求",
-            "totalToken": "總詞元",
-            "totalCost": "總成本",
-            "avgWaitTime": "等待時間",
-            "models": "模型",
-            "noModels": "暫未選擇模型",
-            "sortByCost": "金額",
-            "sortByCount": "次數",
-            "sortByTokens": "詞元",
-            "edit": "編輯",
-            "delete": "刪除",
-            "confirmDelete": "確認刪除",
-            "cancel": "取消"
-        },
-        "form": {
-            "stepPreset": "開始",
-            "stepConnection": "連線",
-            "stepKeys": "憑證",
-            "stepGrants": "模型",
-            "stepAdvanced": "進階",
-            "name": "通道名稱",
-            "baseUrl": "Base URL",
-            "apiKey": "API Key",
-            "enabled": "啟用",
-            "proxy": "使用代理",
-            "keys": "憑證",
-            "keyAdd": "新增憑證",
-            "keyName": "名稱",
-            "keyEmpty": "未填寫",
-            "keysRequiredFirst": "請先新增憑證",
-            "detailLoading": "正在載入通道設定",
-            "detailFailed": "通道設定載入失敗",
-            "grantExpandAll": "全部展開",
-            "grantCollapseAll": "全部折疊",
-            "modelAdd": "新增",
-            "modelCustomPlaceholder": "模型名稱",
-            "modelRefresh": "拉取",
-            "modelNoSelected": "暫無模型",
-            "modelRefreshSuccess": "已拉取 {count} 個模型",
-            "modelRefreshFailed": "拉取失敗",
-            "modelRefreshEmpty": "未取得模型",
-            "channelProxy": "通道代理",
-            "matchRegex": "匹配正則",
-            "paramOverride": "參數覆寫",
-            "customHeader": "自訂 Header",
-            "customHeaderKey": "Header Key",
-            "customHeaderValue": "Header Value",
-            "customHeaderAdd": "新增 Header",
-            "edit": "編輯",
-            "delete": "刪除",
-            "submit": "建立",
-            "save": "儲存",
-            "cancel": "取消",
-            "backToStats": "返回統計",
-            "grantClearAll": "清空全部模型",
-            "modelRemove": "移除模型",
-            "grantRemove": "移除該憑據的授權"
-        }
+      "title": "日誌設定",
+      "clear": {
+        "label": "清空歷史日誌",
+        "button": "清空",
+        "clearing": "清空中..."
+      },
+      "clearSuccess": "日誌已清空",
+      "clearFailed": "清空失敗"
     }
+  },
+  "group": {
+    "toast": {
+      "createFailed": "建立失敗",
+      "updated": "更新成功",
+      "updateFailed": "更新失敗",
+      "deleted": "刪除成功"
+    },
+    "create": {
+      "submit": "建立",
+      "submitting": "建立中..."
+    },
+    "card": {
+      "empty": "暫無規則",
+      "activate": "設為活動項",
+      "cooling": "冷卻 {seconds}s",
+      "affinity": "親和 {seconds}s",
+      "score": "評分 {score}"
+    },
+    "detail": {
+      "actions": {
+        "cancel": "取消",
+        "save": "儲存",
+        "confirmDelete": "確認刪除"
+      }
+    },
+    "form": {
+      "name": "分組名稱",
+      "mode": "路由模式",
+      "modeHint": "手動固定選中成員；故障轉移按成員順序並在失敗時切換；評分路由持續使用最高分成員",
+      "manual": "手動",
+      "failover": "故障轉移",
+      "scored": "評分路由",
+      "members": "成員",
+      "relay": "路由策略",
+      "retryCount": "總嘗試次數",
+      "retryCountHint": "單個成員包含首次請求的總嘗試次數",
+      "retryInterval": "重試間隔（秒）",
+      "retryIntervalHint": "同一成員相鄰兩次嘗試的等待時間",
+      "nonStreamTimeout": "非串流逾時（秒）",
+      "nonStreamTimeoutHint": "等待完整非串流回應的最長時間",
+      "streamTimeout": "串流首事件逾時（秒）",
+      "streamTimeoutHint": "等待首個有效串流事件的最長時間",
+      "cooldown": "冷卻時間（秒）",
+      "cooldownHint": "成員重試耗盡後暫停使用的時間",
+      "affinity": "故障切換親和時間（秒）",
+      "affinityHint": "備用成員首次請求成功後繼續使用該成員的時間",
+      "items": "成員順序",
+      "addItem": "新增模型",
+      "clear": "清空",
+      "autoAddPattern": "自動匹配規則",
+      "autoAddPatternPlaceholder": "Go 正則，如 ^gpt-4o",
+      "autoAddPatternHint": "按模型名稱匹配，區分大小寫，可用 (?i) 忽略大小寫。儲存時自動補齊匹配的可用授權，只增不減；清空規則停止自動新增",
+      "patternInvalid": "正則表達式無效",
+      "patternTooLong": "規則過長（超過 1024 位元組）",
+      "matching": "匹配中…",
+      "matchedSummary": "匹配 {total} 項 · 儲存時將加入 {add} 項",
+      "previewTab": "預覽",
+      "previewFailed": "預覽載入失敗，不影響儲存，儲存時由伺服器按規則補齊",
+      "previewEmpty": "沒有匹配的授權",
+      "willAdd": "將加入",
+      "alreadyAdded": "已在列表",
+      "unavailableSkip": "不可用，不會加入",
+      "removeMatchedHint": "若仍匹配規則，儲存時會補回；停止選用請在日誌詳情中排除"
+    }
+  },
+  "model": {
+    "create": {
+      "name": "模型名稱",
+      "input": "輸入價格",
+      "output": "輸出價格",
+      "cacheRead": "快取讀取",
+      "cacheWrite": "快取寫入",
+      "cancel": "取消",
+      "submit": "建立",
+      "submitting": "建立中..."
+    },
+    "toast": {
+      "updated": "模型價格已更新",
+      "updateFailed": "更新失敗",
+      "deleted": "模型已刪除",
+      "deleteFailed": "刪除失敗"
+    },
+    "card": {
+      "inputCache": "輸入/快取",
+      "outputCache": "輸出/快取",
+      "edit": "編輯",
+      "delete": "刪除"
+    },
+    "overlay": {
+      "cancel": "取消",
+      "deleting": "刪除中...",
+      "confirmDelete": "確認刪除",
+      "input": "輸入",
+      "output": "輸出",
+      "cacheRead": "快取讀取",
+      "cacheWrite": "快取寫入",
+      "save": "儲存"
+    }
+  },
+  "log": {
+    "list": {
+      "empty": "暫無日誌",
+      "disconnected": "日誌連線已中斷，正在重新連線"
+    },
+    "status": {
+      "committed": "回應中"
+    },
+    "card": {
+      "errorInfo": "錯誤訊息",
+      "unknownModel": "未知模型",
+      "detailUnavailable": "正文內容不可用",
+      "requestContent": "請求體",
+      "group": "分組",
+      "groupUnavailable": "目前請求模型沒有對應分組",
+      "noGroupItems": "目前分組沒有可用供應源",
+      "channelChanged": "供應源已切換",
+      "channelCleared": "已取消供應源選擇",
+      "channelChangeFailed": "供應源切換失敗",
+      "exclude": "排除",
+      "restore": "恢復",
+      "excludeTooltip": "從目前分組排除此供應源，所有路由模式都不會再使用它",
+      "restoreTooltip": "將此供應源恢復到目前分組",
+      "excluded": "已排除",
+      "excludeMember": "從目前分組排除 {name}",
+      "restoreMember": "將 {name} 恢復到目前分組",
+      "memberExcluded": "供應源已從目前分組排除",
+      "memberExcludedDescription": "所有路由模式都不會再使用它",
+      "memberExcludeFailed": "排除供應源失敗",
+      "memberRestored": "供應源已恢復到目前分組",
+      "memberRestoreFailed": "恢復供應源失敗",
+      "undo": "復原",
+      "cancel": "取消",
+      "confirmExclude": "確認排除",
+      "excludeLastWarning": "目前分組將沒有可選成員，新請求會立即失敗",
+      "responseContent": "回應內容",
+      "noRequestContent": "(無請求內容)",
+      "noResponseContent": "(無回應內容)",
+      "tokens": "詞元",
+      "retryIndex": "重試 {index}",
+      "retryDetails": "重試詳情",
+      "stopRound": "停止目前輪次",
+      "stopFailed": "停止目前輪次失敗",
+      "waitingChannelSelection": "正在等待選擇供應源",
+      "waitingResponse": "正在等待上游回應",
+      "responseStreaming": "上游已回應，串流傳輸正在進行"
+    }
+  },
+  "channel": {
+    "card": {
+      "requestCount": "請求次數",
+      "totalCost": "總成本",
+      "model": "模型",
+      "successRequests": "成功請求",
+      "failedRequests": "失敗請求",
+      "toast": {
+        "enabled": "供應源已啟用",
+        "disabled": "供應源已停用"
+      }
+    },
+    "stats": {
+      "totalRequests": "總請求",
+      "totalToken": "總詞元",
+      "totalCost": "總成本",
+      "avgWaitTime": "等待時間",
+      "models": "模型",
+      "noModels": "暫未選擇模型",
+      "sortByCost": "金額",
+      "sortByCount": "次數",
+      "sortByTokens": "詞元",
+      "edit": "編輯",
+      "delete": "刪除",
+      "confirmDelete": "確認刪除",
+      "cancel": "取消"
+    },
+    "form": {
+      "stepPreset": "開始",
+      "stepConnection": "連線",
+      "stepKeys": "憑證",
+      "stepGrants": "模型",
+      "stepAdvanced": "進階",
+      "name": "通道名稱",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "enabled": "啟用",
+      "proxy": "使用代理",
+      "keys": "憑證",
+      "keyAdd": "新增憑證",
+      "keyName": "名稱",
+      "keyEmpty": "未填寫",
+      "keysRequiredFirst": "請先新增憑證",
+      "detailLoading": "正在載入通道設定",
+      "detailFailed": "通道設定載入失敗",
+      "grantExpandAll": "全部展開",
+      "grantCollapseAll": "全部折疊",
+      "modelAdd": "新增",
+      "modelCustomPlaceholder": "模型名稱",
+      "modelRefresh": "拉取",
+      "modelNoSelected": "暫無模型",
+      "modelRefreshSuccess": "已拉取 {count} 個模型",
+      "modelRefreshFailed": "拉取失敗",
+      "modelRefreshEmpty": "未取得模型",
+      "channelProxy": "通道代理",
+      "matchRegex": "匹配正則",
+      "paramOverride": "參數覆寫",
+      "customHeader": "自訂 Header",
+      "customHeaderKey": "Header Key",
+      "customHeaderValue": "Header Value",
+      "customHeaderAdd": "新增 Header",
+      "edit": "編輯",
+      "delete": "刪除",
+      "submit": "建立",
+      "save": "儲存",
+      "cancel": "取消",
+      "backToStats": "返回統計",
+      "grantClearAll": "清空全部模型",
+      "modelRemove": "移除模型",
+      "grantRemove": "移除該憑據的授權"
+    }
+  }
 }

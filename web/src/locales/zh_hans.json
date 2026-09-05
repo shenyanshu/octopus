@@ -1,496 +1,509 @@
 {
-    "login": {
-        "username": "用户名",
-        "usernamePlaceholder": "请输入用户名",
-        "password": "密码",
-        "passwordPlaceholder": "请输入密码",
-        "trustDevice": "信任此设备",
-        "apikey": "API 密钥",
-        "apikeyPlaceholder": "请输入 API 密钥 (sk-octopus-...)",
-        "mode": {
-            "user": "账户登录",
-            "apikey": "密钥登录"
-        },
-        "error": {
-            "generic": "登录失败,请检查登录凭据"
-        },
-        "button": {
-            "loading": "登录中...",
-            "submit": "登录"
-        }
+  "login": {
+    "username": "用户名",
+    "usernamePlaceholder": "请输入用户名",
+    "password": "密码",
+    "passwordPlaceholder": "请输入密码",
+    "trustDevice": "信任此设备",
+    "apikey": "API 密钥",
+    "apikeyPlaceholder": "请输入 API 密钥 (sk-octopus-...)",
+    "mode": {
+      "user": "账户登录",
+      "apikey": "密钥登录"
     },
-    "apiKeyDashboard": {
-        "error": "加载数据失败",
-        "logout": "退出",
-        "requestCount": "请求次数",
-        "timeConsumed": "消耗时间",
-        "totalToken": "消耗词元",
-        "totalCost": "消耗费用",
-        "inputTokens": "输入词元",
-        "inputCost": "输入费用",
-        "outputTokens": "输出词元",
-        "outputCost": "输出费用",
-        "successRequests": "成功请求",
-        "failedRequests": "失败请求",
-        "expireAt": "过期时间",
+    "error": {
+      "generic": "登录失败,请检查登录凭据"
+    },
+    "button": {
+      "loading": "登录中...",
+      "submit": "登录"
+    }
+  },
+  "apiKeyDashboard": {
+    "error": "加载数据失败",
+    "logout": "退出",
+    "requestCount": "请求次数",
+    "timeConsumed": "消耗时间",
+    "totalToken": "消耗词元",
+    "totalCost": "消耗费用",
+    "inputTokens": "输入词元",
+    "inputCost": "输入费用",
+    "outputTokens": "输出词元",
+    "outputCost": "输出费用",
+    "successRequests": "成功请求",
+    "failedRequests": "失败请求",
+    "expireAt": "过期时间",
+    "neverExpire": "永不过期",
+    "daysLeft": "天后到期",
+    "expired": "已过期",
+    "supportedModels": "支持的模型"
+  },
+  "navbar": {
+    "home": "主页",
+    "channel": "渠道",
+    "group": "分组",
+    "model": "价格",
+    "log": "日志",
+    "setting": "设置"
+  },
+  "toolbar": {
+    "hideChannelName": "模糊渠道名称",
+    "share": "分享",
+    "popover": {
+      "ariaLabel": "视图选项",
+      "layout": "布局",
+      "sort": "排序",
+      "grid": "网格",
+      "list": "列表",
+      "nameAsc": "名称正序",
+      "nameDesc": "名称倒序",
+      "filter": {
+        "title": "筛选",
+        "channel": {
+          "all": "全部渠道",
+          "enabled": "仅启用",
+          "disabled": "仅禁用"
+        },
+        "group": {
+          "all": "全部分组",
+          "withMembers": "有成员",
+          "empty": "空分组"
+        },
+        "model": {
+          "all": "全部模型",
+          "priced": "已配置价格",
+          "free": "未配置价格"
+        }
+      }
+    }
+  },
+  "common": {
+    "copy": {
+      "success": "复制成功",
+      "failed": "复制失败",
+      "noContent": "无可复制内容"
+    }
+  },
+  "home": {
+    "metric": {
+      "cost": "金额",
+      "count": "次数",
+      "tokens": "词元"
+    },
+    "activity": {
+      "requestCount": "请求次数",
+      "waitTime": "消耗时间",
+      "totalToken": "消耗词元",
+      "totalCost": "消耗费用",
+      "noData": "无数据"
+    },
+    "total": {
+      "requestStats": "请求统计",
+      "totalStats": "全部统计",
+      "inputStats": "输入统计",
+      "outputStats": "输出统计",
+      "requestCount": "请求次数",
+      "timeConsumed": "消耗时间",
+      "totalToken": "消耗词元",
+      "totalCost": "消耗费用",
+      "inputTokens": "输入词元",
+      "inputCost": "输入费用",
+      "outputTokens": "输出词元",
+      "outputCost": "输出费用"
+    },
+    "chart": {
+      "title": "趋势",
+      "totalRequests": "请求次数",
+      "totalCost": "消费金额",
+      "totalTokens": "词元消耗",
+      "timePeriod": "时间周期",
+      "period": {
+        "today": "今天",
+        "last7Days": "7天",
+        "last30Days": "30天"
+      }
+    },
+    "rank": {
+      "channel": "渠道",
+      "model": "模型",
+      "noData": "暂无排行数据",
+      "successRate": "成功率"
+    }
+  },
+  "setting": {
+    "appearance": "外观",
+    "system": "系统",
+    "theme": {
+      "label": "主题",
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统"
+    },
+    "language": {
+      "label": "语言",
+      "zh_hans": "简体中文",
+      "zh_hant": "繁体中文",
+      "en": "English"
+    },
+    "proxyUrl": {
+      "label": "代理地址",
+      "placeholder": "请输入代理地址"
+    },
+    "statsSaveInterval": {
+      "label": "统计保存周期（分钟）",
+      "placeholder": "请输入周期（分钟）"
+    },
+    "corsAllowOrigins": {
+      "label": "CORS 跨域白名单",
+      "hint": "为空禁止跨域，* 允许所有",
+      "example": "只允许指定域名: https://example.com,https://example2.com"
+    },
+    "saved": "已保存",
+    "backup": {
+      "title": "备份 / 恢复",
+      "export": {
+        "button": "导出",
+        "exporting": "导出中...",
+        "success": "开始导出"
+      },
+      "import": {
+        "title": "导入",
+        "button": "导入",
+        "importing": "导入中...",
+        "noFile": "请先选择 JSON 文件",
+        "success": "导入成功",
+        "failed": "导入失败",
+        "result": "导入结果"
+      }
+    },
+    "apiKey": {
+      "title": "API 密钥",
+      "empty": "暂无 API 密钥",
+      "add": "添加密钥",
+      "loadFailed": "加载失败",
+      "form": {
+        "name": "名称",
+        "value": "密钥值",
+        "valuePlaceholder": "留空自动生成",
+        "maxCost": "最大金额",
+        "maxCostPlaceholder": "请输入金额",
+        "unlimited": "无限制",
+        "expireAt": "过期日期",
+        "selectDate": "选择日期",
         "neverExpire": "永不过期",
-        "daysLeft": "天后到期",
-        "expired": "已过期",
-        "supportedModels": "支持的模型"
+        "supportedModels": "支持的模型",
+        "noModels": "暂无可选模型",
+        "modelsHint": "不选择则为无限制",
+        "enabled": "是否启用",
+        "cancel": "取消",
+        "create": "创建",
+        "save": "保存",
+        "confirm": "确认"
+      },
+      "stats": {
+        "noData": "暂无统计数据",
+        "inputToken": "输入词元",
+        "outputToken": "输出词元",
+        "inputCost": "输入费用",
+        "outputCost": "输出费用",
+        "requestSuccess": "成功请求",
+        "requestFailed": "失败请求"
+      },
+      "toast": {
+        "createSuccess": "API 密钥创建成功",
+        "createError": "API 密钥创建失败",
+        "updateSuccess": "API 密钥更新成功",
+        "updateError": "API 密钥更新失败",
+        "deleteSuccess": "API 密钥删除成功",
+        "deleteError": "API 密钥删除失败"
+      }
     },
-    "navbar": {
-        "home": "主页",
-        "channel": "渠道",
-        "group": "分组",
-        "model": "价格",
-        "log": "日志",
-        "setting": "设置"
+    "llmPrice": {
+      "title": "模型价格",
+      "updateInterval": {
+        "label": "自动更新间隔（小时）",
+        "placeholder": "请输入间隔（小时）"
+      },
+      "manualUpdate": {
+        "label": "手动更新价格",
+        "button": "立即更新",
+        "updating": "更新中..."
+      },
+      "lastUpdate": "上次更新",
+      "neverUpdated": "从未更新",
+      "updateSuccess": "价格更新成功",
+      "updateFailed": "价格更新失败",
+      "rebuild": {
+        "label": "重建价格数据",
+        "description": "重新匹配并清理模型价格\n会重置手动设置的价格",
+        "button": "重建",
+        "cancel": "取消",
+        "confirm": "确认重建",
+        "rebuilding": "重建中...",
+        "success": "价格数据重建成功，共处理 {count} 个模型",
+        "failed": "价格数据重建失败"
+      }
     },
-    "toolbar": {
-        "hideChannelName": "模糊渠道名称",
-        "share": "分享",
-        "popover": {
-            "ariaLabel": "视图选项",
-            "layout": "布局",
-            "sort": "排序",
-            "grid": "网格",
-            "list": "列表",
-            "nameAsc": "名称正序",
-            "nameDesc": "名称倒序",
-            "filter": {
-                "title": "筛选",
-                "channel": {
-                    "all": "全部渠道",
-                    "enabled": "仅启用",
-                    "disabled": "仅禁用"
-                },
-                "group": {
-                    "all": "全部分组",
-                    "withMembers": "有成员",
-                    "empty": "空分组"
-                },
-                "model": {
-                    "all": "全部模型",
-                    "priced": "已配置价格",
-                    "free": "未配置价格"
-                }
-            }
-        }
+    "account": {
+      "title": "账户设置",
+      "save": "保存",
+      "saving": "保存中...",
+      "cancel": "取消",
+      "username": {
+        "label": "修改用户名",
+        "placeholder": "请输入新用户名",
+        "empty": "用户名不能为空",
+        "success": "用户名修改成功",
+        "failed": "用户名修改失败"
+      },
+      "password": {
+        "label": "修改密码",
+        "oldPlaceholder": "请输入当前密码",
+        "newPlaceholder": "请输入新密码",
+        "confirmPlaceholder": "请确认新密码",
+        "oldEmpty": "请输入当前密码",
+        "newEmpty": "请输入新密码",
+        "mismatch": "两次输入的密码不一致",
+        "tooShort": "密码长度至少为6位",
+        "change": "修改密码",
+        "success": "密码修改成功",
+        "failed": "密码修改失败"
+      }
     },
-    "common": {
-        "copy": {
-            "success": "复制成功",
-            "failed": "复制失败",
-            "noContent": "无可复制内容"
-        }
-    },
-    "home": {
-        "metric": {
-            "cost": "金额",
-            "count": "次数",
-            "tokens": "词元"
-        },
-        "activity": {
-            "requestCount": "请求次数",
-            "waitTime": "消耗时间",
-            "totalToken": "消耗词元",
-            "totalCost": "消耗费用",
-            "noData": "无数据"
-        },
-        "total": {
-            "requestStats": "请求统计",
-            "totalStats": "全部统计",
-            "inputStats": "输入统计",
-            "outputStats": "输出统计",
-            "requestCount": "请求次数",
-            "timeConsumed": "消耗时间",
-            "totalToken": "消耗词元",
-            "totalCost": "消耗费用",
-            "inputTokens": "输入词元",
-            "inputCost": "输入费用",
-            "outputTokens": "输出词元",
-            "outputCost": "输出费用"
-        },
-        "chart": {
-            "title": "趋势",
-            "totalRequests": "请求次数",
-            "totalCost": "消费金额",
-            "totalTokens": "词元消耗",
-            "timePeriod": "时间周期",
-            "period": {
-                "today": "今天",
-                "last7Days": "7天",
-                "last30Days": "30天"
-            }
-        },
-        "rank": {
-            "channel": "渠道",
-            "model": "模型",
-            "noData": "暂无排行数据",
-            "successRate": "成功率"
-        }
-    },
-    "setting": {
-        "appearance": "外观",
-        "system": "系统",
-        "theme": {
-            "label": "主题",
-            "light": "浅色",
-            "dark": "深色",
-            "system": "跟随系统"
-        },
-        "language": {
-            "label": "语言",
-            "zh_hans": "简体中文",
-            "zh_hant": "繁体中文",
-            "en": "English"
-        },
-        "proxyUrl": {
-            "label": "代理地址",
-            "placeholder": "请输入代理地址"
-        },
-        "statsSaveInterval": {
-            "label": "统计保存周期（分钟）",
-            "placeholder": "请输入周期（分钟）"
-        },
-        "corsAllowOrigins": {
-            "label": "CORS 跨域白名单",
-            "hint": "为空禁止跨域，* 允许所有",
-            "example": "只允许指定域名: https://example.com,https://example2.com"
-        },
-        "saved": "已保存",
-        "backup": {
-            "title": "备份 / 恢复",
-            "export": {
-                "button": "导出",
-                "exporting": "导出中...",
-                "success": "开始导出"
-            },
-            "import": {
-                "title": "导入",
-                "button": "导入",
-                "importing": "导入中...",
-                "noFile": "请先选择 JSON 文件",
-                "success": "导入成功",
-                "failed": "导入失败",
-                "result": "导入结果"
-            }
-        },
-        "apiKey": {
-            "title": "API 密钥",
-            "empty": "暂无 API 密钥",
-            "add": "添加密钥",
-            "loadFailed": "加载失败",
-            "form": {
-                "name": "名称",
-                "value": "密钥值",
-                "valuePlaceholder": "留空自动生成",
-                "maxCost": "最大金额",
-                "maxCostPlaceholder": "请输入金额",
-                "unlimited": "无限制",
-                "expireAt": "过期日期",
-                "selectDate": "选择日期",
-                "neverExpire": "永不过期",
-                "supportedModels": "支持的模型",
-                "noModels": "暂无可选模型",
-                "modelsHint": "不选择则为无限制",
-                "enabled": "是否启用",
-                "cancel": "取消",
-                "create": "创建",
-                "save": "保存",
-                "confirm": "确认"
-            },
-            "stats": {
-                "noData": "暂无统计数据",
-                "inputToken": "输入词元",
-                "outputToken": "输出词元",
-                "inputCost": "输入费用",
-                "outputCost": "输出费用",
-                "requestSuccess": "成功请求",
-                "requestFailed": "失败请求"
-            },
-            "toast": {
-                "createSuccess": "API 密钥创建成功",
-                "createError": "API 密钥创建失败",
-                "updateSuccess": "API 密钥更新成功",
-                "updateError": "API 密钥更新失败",
-                "deleteSuccess": "API 密钥删除成功",
-                "deleteError": "API 密钥删除失败"
-            }
-        },
-        "llmPrice": {
-            "title": "模型价格",
-            "updateInterval": {
-                "label": "自动更新间隔（小时）",
-                "placeholder": "请输入间隔（小时）"
-            },
-            "manualUpdate": {
-                "label": "手动更新价格",
-                "button": "立即更新",
-                "updating": "更新中..."
-            },
-            "lastUpdate": "上次更新",
-            "neverUpdated": "从未更新",
-            "updateSuccess": "价格更新成功",
-            "updateFailed": "价格更新失败",
-            "rebuild": {
-                "label": "重建价格数据",
-                "description": "重新匹配并清理模型价格\n会重置手动设置的价格",
-                "button": "重建",
-                "cancel": "取消",
-                "confirm": "确认重建",
-                "rebuilding": "重建中...",
-                "success": "价格数据重建成功，共处理 {count} 个模型",
-                "failed": "价格数据重建失败"
-            }
-        },
-        "account": {
-            "title": "账户设置",
-            "save": "保存",
-            "saving": "保存中...",
-            "cancel": "取消",
-            "username": {
-                "label": "修改用户名",
-                "placeholder": "请输入新用户名",
-                "empty": "用户名不能为空",
-                "success": "用户名修改成功",
-                "failed": "用户名修改失败"
-            },
-            "password": {
-                "label": "修改密码",
-                "oldPlaceholder": "请输入当前密码",
-                "newPlaceholder": "请输入新密码",
-                "confirmPlaceholder": "请确认新密码",
-                "oldEmpty": "请输入当前密码",
-                "newEmpty": "请输入新密码",
-                "mismatch": "两次输入的密码不一致",
-                "tooShort": "密码长度至少为6位",
-                "change": "修改密码",
-                "success": "密码修改成功",
-                "failed": "密码修改失败"
-            }
-        },
-        "info": {
-            "title": "版本信息",
-            "currentVersion": "当前版本",
-            "github": "GitHub 仓库",
-            "unknown": "未知"
-        },
-        "log": {
-            "title": "日志设置",
-            "clear": {
-                "label": "清空历史日志",
-                "button": "清空",
-                "clearing": "清空中..."
-            },
-            "clearSuccess": "日志已清空",
-            "clearFailed": "清空失败"
-        }
-    },
-    "group": {
-        "toast": {
-            "createFailed": "创建失败",
-            "updated": "更新成功",
-            "updateFailed": "更新失败",
-            "deleted": "删除成功"
-        },
-        "create": {
-            "submit": "创建",
-            "submitting": "创建中..."
-        },
-        "card": {
-            "empty": "暂无规则",
-            "activate": "设为活动项",
-            "cooling": "冷却 {seconds}s",
-            "affinity": "亲和 {seconds}s",
-            "score": "评分 {score}"
-        },
-        "detail": {
-            "actions": {
-                "cancel": "取消",
-                "save": "保存",
-                "confirmDelete": "确认删除"
-            }
-        },
-        "form": {
-            "name": "分组名称",
-            "mode": "路由模式",
-            "modeHint": "手动固定选中成员；故障转移按成员顺序并在失败时切换；评分路由持续使用最高分成员",
-            "manual": "手动",
-            "failover": "故障转移",
-            "scored": "评分路由",
-            "members": "成员",
-            "relay": "路由策略",
-            "retryCount": "总尝试次数",
-            "retryCountHint": "单个成员包含首次请求的总尝试次数",
-            "retryInterval": "重试间隔（秒）",
-            "retryIntervalHint": "同一成员相邻两次尝试的等待时间",
-            "nonStreamTimeout": "非流式超时（秒）",
-            "nonStreamTimeoutHint": "等待完整非流式响应的最长时间",
-            "streamTimeout": "流式首事件超时（秒）",
-            "streamTimeoutHint": "等待首个有效流事件的最长时间",
-            "cooldown": "冷却时间（秒）",
-            "cooldownHint": "成员重试耗尽后暂停使用的时间",
-            "affinity": "故障切换亲和时间（秒）",
-            "affinityHint": "备用成员首次请求成功后继续使用该成员的时间",
-            "items": "成员顺序",
-            "addItem": "添加模型",
-            "autoAdd": "自动添加",
-            "clear": "清空"
-        }
-    },
-    "model": {
-        "create": {
-            "name": "模型名称",
-            "input": "输入价格",
-            "output": "输出价格",
-            "cacheRead": "缓存读取",
-            "cacheWrite": "缓存写入",
-            "cancel": "取消",
-            "submit": "创建",
-            "submitting": "创建中..."
-        },
-        "toast": {
-            "updated": "模型价格已更新",
-            "updateFailed": "更新失败",
-            "deleted": "模型已删除",
-            "deleteFailed": "删除失败"
-        },
-        "card": {
-            "inputCache": "输入/缓存",
-            "outputCache": "输出/缓存",
-            "edit": "编辑",
-            "delete": "删除"
-        },
-        "overlay": {
-            "cancel": "取消",
-            "deleting": "删除中...",
-            "confirmDelete": "确认删除",
-            "input": "输入",
-            "output": "输出",
-            "cacheRead": "缓存读取",
-            "cacheWrite": "缓存写入",
-            "save": "保存"
-        }
+    "info": {
+      "title": "版本信息",
+      "currentVersion": "当前版本",
+      "github": "GitHub 仓库",
+      "unknown": "未知"
     },
     "log": {
-        "list": {
-            "empty": "暂无日志",
-            "disconnected": "日志连接已断开，正在重连"
-        },
-        "status": {
-            "committed": "响应中"
-        },
-        "card": {
-            "errorInfo": "错误信息",
-            "unknownModel": "未知模型",
-            "detailUnavailable": "正文内容不可用",
-            "requestContent": "请求体",
-            "group": "分组",
-            "groupUnavailable": "当前请求模型没有对应分组",
-            "noGroupItems": "当前分组没有可用渠道",
-            "channelChanged": "渠道已切换",
-            "channelCleared": "已取消渠道选择",
-            "channelChangeFailed": "渠道切换失败",
-            "exclude": "排除",
-            "restore": "恢复",
-            "excludeTooltip": "从当前分组排除此渠道，所有路由模式都不会再使用它",
-            "restoreTooltip": "将此渠道恢复到当前分组",
-            "excluded": "已排除",
-            "excludeMember": "从当前分组排除 {name}",
-            "restoreMember": "将 {name} 恢复到当前分组",
-            "memberExcluded": "渠道已从当前分组排除",
-            "memberExcludedDescription": "所有路由模式都不会再使用它",
-            "memberExcludeFailed": "排除渠道失败",
-            "memberRestored": "渠道已恢复到当前分组",
-            "memberRestoreFailed": "恢复渠道失败",
-            "undo": "撤销",
-            "cancel": "取消",
-            "confirmExclude": "确认排除",
-            "excludeLastWarning": "当前分组将没有可选成员，新请求会立即失败",
-            "responseContent": "响应内容",
-            "noRequestContent": "(无请求内容)",
-            "noResponseContent": "(无响应内容)",
-            "tokens": "词元",
-            "retryIndex": "重试 {index}",
-            "retryDetails": "重试详情",
-            "stopRound": "停止当前轮次",
-            "stopFailed": "停止当前轮次失败",
-            "waitingChannelSelection": "正在等待选择渠道",
-            "waitingResponse": "正在等待上游响应",
-            "responseStreaming": "上游已响应，流式传输正在进行"
-        }
-    },
-    "channel": {
-        "card": {
-            "requestCount": "请求次数",
-            "totalCost": "总成本",
-            "model": "模型",
-            "successRequests": "成功请求",
-            "failedRequests": "失败请求",
-            "toast": {
-                "enabled": "渠道已启用",
-                "disabled": "渠道已禁用"
-            }
-        },
-        "stats": {
-            "totalRequests": "总请求",
-            "totalToken": "总词元",
-            "totalCost": "总成本",
-            "avgWaitTime": "等待时间",
-            "models": "模型",
-            "noModels": "暂未选择模型",
-            "sortByCost": "金额",
-            "sortByCount": "次数",
-            "sortByTokens": "词元",
-            "edit": "编辑",
-            "delete": "删除",
-            "confirmDelete": "确认删除",
-            "cancel": "取消"
-        },
-        "form": {
-            "stepPreset": "开始",
-            "stepConnection": "连接",
-            "stepKeys": "凭据",
-            "stepGrants": "模型",
-            "stepAdvanced": "高级",
-            "name": "渠道名称",
-            "baseUrl": "Base URL",
-            "apiKey": "API Key",
-            "enabled": "启用",
-            "proxy": "使用代理",
-            "keys": "凭据",
-            "keyAdd": "添加凭据",
-            "keyName": "名称",
-            "keyEmpty": "未填写",
-            "keysRequiredFirst": "请先添加凭据",
-            "detailLoading": "正在加载渠道配置",
-            "detailFailed": "渠道配置加载失败",
-            "grantExpandAll": "全部展开",
-            "grantCollapseAll": "全部折叠",
-            "modelAdd": "添加",
-            "modelCustomPlaceholder": "模型名称",
-            "modelRefresh": "拉取",
-            "modelNoSelected": "暂无模型",
-            "modelRefreshSuccess": "已拉取 {count} 个模型",
-            "modelRefreshFailed": "拉取失败",
-            "modelRefreshEmpty": "未获取到模型",
-            "channelProxy": "渠道代理",
-            "matchRegex": "匹配正则",
-            "paramOverride": "参数覆盖",
-            "customHeader": "自定义 Header",
-            "customHeaderKey": "Header Key",
-            "customHeaderValue": "Header Value",
-            "customHeaderAdd": "添加 Header",
-            "edit": "编辑",
-            "delete": "删除",
-            "submit": "创建",
-            "save": "保存",
-            "cancel": "取消",
-            "backToStats": "返回统计",
-            "grantClearAll": "清空全部模型",
-            "modelRemove": "移除模型",
-            "grantRemove": "移除该凭据的授权"
-        }
+      "title": "日志设置",
+      "clear": {
+        "label": "清空历史日志",
+        "button": "清空",
+        "clearing": "清空中..."
+      },
+      "clearSuccess": "日志已清空",
+      "clearFailed": "清空失败"
     }
+  },
+  "group": {
+    "toast": {
+      "createFailed": "创建失败",
+      "updated": "更新成功",
+      "updateFailed": "更新失败",
+      "deleted": "删除成功"
+    },
+    "create": {
+      "submit": "创建",
+      "submitting": "创建中..."
+    },
+    "card": {
+      "empty": "暂无规则",
+      "activate": "设为活动项",
+      "cooling": "冷却 {seconds}s",
+      "affinity": "亲和 {seconds}s",
+      "score": "评分 {score}"
+    },
+    "detail": {
+      "actions": {
+        "cancel": "取消",
+        "save": "保存",
+        "confirmDelete": "确认删除"
+      }
+    },
+    "form": {
+      "name": "分组名称",
+      "mode": "路由模式",
+      "modeHint": "手动固定选中成员；故障转移按成员顺序并在失败时切换；评分路由持续使用最高分成员",
+      "manual": "手动",
+      "failover": "故障转移",
+      "scored": "评分路由",
+      "members": "成员",
+      "relay": "路由策略",
+      "retryCount": "总尝试次数",
+      "retryCountHint": "单个成员包含首次请求的总尝试次数",
+      "retryInterval": "重试间隔（秒）",
+      "retryIntervalHint": "同一成员相邻两次尝试的等待时间",
+      "nonStreamTimeout": "非流式超时（秒）",
+      "nonStreamTimeoutHint": "等待完整非流式响应的最长时间",
+      "streamTimeout": "流式首事件超时（秒）",
+      "streamTimeoutHint": "等待首个有效流事件的最长时间",
+      "cooldown": "冷却时间（秒）",
+      "cooldownHint": "成员重试耗尽后暂停使用的时间",
+      "affinity": "故障切换亲和时间（秒）",
+      "affinityHint": "备用成员首次请求成功后继续使用该成员的时间",
+      "items": "成员顺序",
+      "addItem": "添加模型",
+      "clear": "清空",
+      "autoAddPattern": "自动匹配规则",
+      "autoAddPatternPlaceholder": "Go 正则，如 ^gpt-4o",
+      "autoAddPatternHint": "按模型名匹配，区分大小写，可用 (?i) 忽略大小写。保存时自动补齐匹配的可用授权，只增不减；清空规则停止自动添加",
+      "patternInvalid": "正则表达式无效",
+      "patternTooLong": "规则过长（超过 1024 字节）",
+      "matching": "匹配中…",
+      "matchedSummary": "匹配 {total} 项 · 保存时将加入 {add} 项",
+      "previewTab": "预览",
+      "previewFailed": "预览加载失败，不影响保存，保存时由服务端按规则补齐",
+      "previewEmpty": "没有匹配的授权",
+      "willAdd": "将加入",
+      "alreadyAdded": "已在列表",
+      "unavailableSkip": "不可用，不会加入",
+      "removeMatchedHint": "若仍匹配规则，保存时会补回；停止选用请在日志详情中排除"
+    }
+  },
+  "model": {
+    "create": {
+      "name": "模型名称",
+      "input": "输入价格",
+      "output": "输出价格",
+      "cacheRead": "缓存读取",
+      "cacheWrite": "缓存写入",
+      "cancel": "取消",
+      "submit": "创建",
+      "submitting": "创建中..."
+    },
+    "toast": {
+      "updated": "模型价格已更新",
+      "updateFailed": "更新失败",
+      "deleted": "模型已删除",
+      "deleteFailed": "删除失败"
+    },
+    "card": {
+      "inputCache": "输入/缓存",
+      "outputCache": "输出/缓存",
+      "edit": "编辑",
+      "delete": "删除"
+    },
+    "overlay": {
+      "cancel": "取消",
+      "deleting": "删除中...",
+      "confirmDelete": "确认删除",
+      "input": "输入",
+      "output": "输出",
+      "cacheRead": "缓存读取",
+      "cacheWrite": "缓存写入",
+      "save": "保存"
+    }
+  },
+  "log": {
+    "list": {
+      "empty": "暂无日志",
+      "disconnected": "日志连接已断开，正在重连"
+    },
+    "status": {
+      "committed": "响应中"
+    },
+    "card": {
+      "errorInfo": "错误信息",
+      "unknownModel": "未知模型",
+      "detailUnavailable": "正文内容不可用",
+      "requestContent": "请求体",
+      "group": "分组",
+      "groupUnavailable": "当前请求模型没有对应分组",
+      "noGroupItems": "当前分组没有可用渠道",
+      "channelChanged": "渠道已切换",
+      "channelCleared": "已取消渠道选择",
+      "channelChangeFailed": "渠道切换失败",
+      "exclude": "排除",
+      "restore": "恢复",
+      "excludeTooltip": "从当前分组排除此渠道，所有路由模式都不会再使用它",
+      "restoreTooltip": "将此渠道恢复到当前分组",
+      "excluded": "已排除",
+      "excludeMember": "从当前分组排除 {name}",
+      "restoreMember": "将 {name} 恢复到当前分组",
+      "memberExcluded": "渠道已从当前分组排除",
+      "memberExcludedDescription": "所有路由模式都不会再使用它",
+      "memberExcludeFailed": "排除渠道失败",
+      "memberRestored": "渠道已恢复到当前分组",
+      "memberRestoreFailed": "恢复渠道失败",
+      "undo": "撤销",
+      "cancel": "取消",
+      "confirmExclude": "确认排除",
+      "excludeLastWarning": "当前分组将没有可选成员，新请求会立即失败",
+      "responseContent": "响应内容",
+      "noRequestContent": "(无请求内容)",
+      "noResponseContent": "(无响应内容)",
+      "tokens": "词元",
+      "retryIndex": "重试 {index}",
+      "retryDetails": "重试详情",
+      "stopRound": "停止当前轮次",
+      "stopFailed": "停止当前轮次失败",
+      "waitingChannelSelection": "正在等待选择渠道",
+      "waitingResponse": "正在等待上游响应",
+      "responseStreaming": "上游已响应，流式传输正在进行"
+    }
+  },
+  "channel": {
+    "card": {
+      "requestCount": "请求次数",
+      "totalCost": "总成本",
+      "model": "模型",
+      "successRequests": "成功请求",
+      "failedRequests": "失败请求",
+      "toast": {
+        "enabled": "渠道已启用",
+        "disabled": "渠道已禁用"
+      }
+    },
+    "stats": {
+      "totalRequests": "总请求",
+      "totalToken": "总词元",
+      "totalCost": "总成本",
+      "avgWaitTime": "等待时间",
+      "models": "模型",
+      "noModels": "暂未选择模型",
+      "sortByCost": "金额",
+      "sortByCount": "次数",
+      "sortByTokens": "词元",
+      "edit": "编辑",
+      "delete": "删除",
+      "confirmDelete": "确认删除",
+      "cancel": "取消"
+    },
+    "form": {
+      "stepPreset": "开始",
+      "stepConnection": "连接",
+      "stepKeys": "凭据",
+      "stepGrants": "模型",
+      "stepAdvanced": "高级",
+      "name": "渠道名称",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "enabled": "启用",
+      "proxy": "使用代理",
+      "keys": "凭据",
+      "keyAdd": "添加凭据",
+      "keyName": "名称",
+      "keyEmpty": "未填写",
+      "keysRequiredFirst": "请先添加凭据",
+      "detailLoading": "正在加载渠道配置",
+      "detailFailed": "渠道配置加载失败",
+      "grantExpandAll": "全部展开",
+      "grantCollapseAll": "全部折叠",
+      "modelAdd": "添加",
+      "modelCustomPlaceholder": "模型名称",
+      "modelRefresh": "拉取",
+      "modelNoSelected": "暂无模型",
+      "modelRefreshSuccess": "已拉取 {count} 个模型",
+      "modelRefreshFailed": "拉取失败",
+      "modelRefreshEmpty": "未获取到模型",
+      "channelProxy": "渠道代理",
+      "matchRegex": "匹配正则",
+      "paramOverride": "参数覆盖",
+      "customHeader": "自定义 Header",
+      "customHeaderKey": "Header Key",
+      "customHeaderValue": "Header Value",
+      "customHeaderAdd": "添加 Header",
+      "edit": "编辑",
+      "delete": "删除",
+      "submit": "创建",
+      "save": "保存",
+      "cancel": "取消",
+      "backToStats": "返回统计",
+      "grantClearAll": "清空全部模型",
+      "modelRemove": "移除模型",
+      "grantRemove": "移除该凭据的授权"
+    }
+  }
 }

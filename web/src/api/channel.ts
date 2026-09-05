@@ -1,30 +1,43 @@
-import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiRequest } from './client';
-import { channelStatsQueryOptions, groupListQueryOptions, modelListQueryOptions } from './queries';
-import { formatStatsMetrics, type StatsMetrics, type StatsMetricsFormatted } from './stats';
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { apiRequest } from "./client";
+import {
+  channelStatsQueryOptions,
+  groupListQueryOptions,
+  modelListQueryOptions,
+} from "./queries";
+import {
+  formatStatsMetrics,
+  type StatsMetrics,
+  type StatsMetricsFormatted,
+} from "./stats";
 
 // Protocol 是渠道支持的上游线协议位掩码，位值与后端 model.Protocol 一致，不可变更。
 // 一条授权可同时支持多个协议，按位或组合；1 << 0 由后端保留待用。
 export const Protocol = {
-    OpenAIChatCompletion: 1 << 1,
-    OpenAIResponse: 1 << 2,
-    AnthropicMessage: 1 << 3,
+  OpenAIChatCompletion: 1 << 1,
+  OpenAIResponse: 1 << 2,
+  AnthropicMessage: 1 << 3,
 } as const;
 
 // Dialect 是上游在标准协议之上的方言，决定出站转换器的厂商特化配置。
 // 地址与路径不属于方言范畴，由前端按服务商预填到渠道字段上。
-export type Dialect = 'generic';
+export type Dialect = "generic";
 
 type CustomHeader = {
-    header_key: string;
-    header_value: string;
+  header_key: string;
+  header_value: string;
 };
 
 // ChannelKey 是渠道下的一份上游凭据；名称在渠道内唯一，读写都按它引用。
 export type ChannelKey = {
-    name: string;
-    key: string;
-    enabled: boolean;
+  name: string;
+  key: string;
+  enabled: boolean;
 };
 
 // ChannelGrant 是渠道内的一条上游授权：指定模型使用指定凭据时支持的协议集合，也是转发的最小单位。
@@ -32,22 +45,22 @@ export type ChannelKey = {
 // 故提交侧只能按名称引用，读侧也随之给名称，页面无需在主键与名称之间翻译。
 // 授权本身没有启用状态: 不再授权即删掉该组合, 临时收回则停用凭据或摘掉协议位。
 export type ChannelGrant = {
-    model_name: string;
-    key_name: string;
-    protocols: number; // Protocol 位掩码。
+  model_name: string;
+  key_name: string;
+  protocols: number; // Protocol 位掩码。
 };
 
 // ChannelGrantCandidate 是分组页可选取的一条授权，字段与 GroupItem 的展示字段一一对应。
 // 分组页由此不必拉整份渠道列表：那里带着统计、路径、代理与凭据明文，与选取成员无关。
 // available 与分组成员同一口径，均由后端定稿，前后端不会各判一套。
 export type ChannelGrantCandidate = {
-    id: number; // 授权主键，分组成员按它引用。
-    channel_id: number;
-    channel_name: string;
-    model_name: string;
-    key_name: string;
-    protocols: number; // Protocol 位掩码。
-    available: boolean;
+  id: number; // 授权主键，分组成员按它引用。
+  channel_id: number;
+  channel_name: string;
+  model_name: string;
+  key_name: string;
+  protocols: number; // Protocol 位掩码。
+  available: boolean;
 };
 
 /**
@@ -57,56 +70,56 @@ export type ChannelGrantCandidate = {
  * keys、models、grants 和 custom_header 恒为数组，后端读取侧承诺不为 null。
  */
 export type ChannelDetail = {
-    id: number;
-    name: string;
-    dialect: Dialect;
-    enabled: boolean;
-    base_url: string; // 上游地址，各协议共用。
-    openai_chat_completion_path: string;
-    openai_response_path: string;
-    anthropic_message_path: string;
-    keys: ChannelKey[];
-    models: string[]; // 上游模型名称；模型除名称外没有界面用得上的字段。
-    grants: ChannelGrant[];
-    proxy: boolean;
-    custom_header: CustomHeader[];
-    param_override: string;
-    channel_proxy: string;
-    match_regex: string;
+  id: number;
+  name: string;
+  dialect: Dialect;
+  enabled: boolean;
+  base_url: string; // 上游地址，各协议共用。
+  openai_chat_completion_path: string;
+  openai_response_path: string;
+  anthropic_message_path: string;
+  keys: ChannelKey[];
+  models: string[]; // 上游模型名称；模型除名称外没有界面用得上的字段。
+  grants: ChannelGrant[];
+  proxy: boolean;
+  custom_header: CustomHeader[];
+  param_override: string;
+  channel_proxy: string;
+  match_regex: string;
 };
 
 // ChannelModelStats 是单个渠道模型的累计统计，自带名称。
 export type ChannelModelStats = StatsMetrics & {
-    model_id: number;
-    model_name: string;
+  model_id: number;
+  model_name: string;
 };
 
 // ChannelStats 是单个渠道及其模型的累计统计，自带名称与启停状态。
 // 这一份同时充当渠道列表项：列表页要展示的名称、启停与模型个数（即 models.length）都在此，
 // 故没有单独的渠道概览接口，整份配置在点开编辑时由 useChannelDetail 单独取。
 export type ChannelStats = StatsMetrics & {
-    channel_id: number;
-    channel_name: string;
-    enabled: boolean;
-    models: ChannelModelStats[];
+  channel_id: number;
+  channel_name: string;
+  enabled: boolean;
+  models: ChannelModelStats[];
 };
 
 // ChannelModelStatsFormatted 是单个渠道模型的展示用统计。
 export type ChannelModelStatsFormatted = {
-    model_id: number;
-    model_name: string;
-    formatted: StatsMetricsFormatted;
+  model_id: number;
+  model_name: string;
+  formatted: StatsMetricsFormatted;
 };
 
 // ChannelStatsFormatted 是单个渠道及其模型的展示用统计，同时充当渠道列表项。
 // 名称与启停随统计一并给出，列表页由此只消费这一条查询：模型个数即 models.length，
 // 整份配置在点开编辑时由 useChannelDetail 单独取。
 export type ChannelStatsFormatted = {
-    channel_id: number;
-    channel_name: string;
-    enabled: boolean;
-    models: ChannelModelStatsFormatted[];
-    formatted: StatsMetricsFormatted;
+  channel_id: number;
+  channel_name: string;
+  enabled: boolean;
+  models: ChannelModelStatsFormatted[];
+  formatted: StatsMetricsFormatted;
 };
 
 // FetchModelRequest 按指定凭据试拉上游模型列表。
@@ -115,51 +128,74 @@ export type ChannelStatsFormatted = {
 // 名称可为空：探测常发生在渠道尚未命名时，后端只要求地址非空。
 // 不带协议：后端一次同时探 OpenAI 与 Anthropic 两侧，协议支持由各侧响应决定。
 type FetchModelRequest = {
-    channel: Omit<ChannelDetail, 'id' | 'keys' | 'models' | 'grants'>;
-    key: string;
+  channel: Omit<ChannelDetail, "id" | "keys" | "models" | "grants">;
+  key: string;
 };
 
 // FetchModel 是探测到的单个上游模型及其支持的协议集合。
 // OpenAI 侧记为 Responses 而非 Chat：Chat Completions 已被官方标记弃用，需要 Chat 的渠道由用户手动勾选。
 export type FetchModel = {
-    name: string;
-    protocols: number; // Protocol 位掩码。
+  name: string;
+  protocols: number; // Protocol 位掩码。
 };
 
 // channelGrantListQueryOptions 供分组页查询可选授权。
 // 与渠道列表分开: 选取成员只需名称与可用性, 拉整份渠道会连带路径, 代理与凭据明文。
 export const channelGrantListQueryOptions = queryOptions({
-    queryKey: ['channels', 'grants'],
-    queryFn: () => apiRequest<ChannelGrantCandidate[]>('/api/v1/channel/grants'),
+  queryKey: ["channels", "grants"],
+  queryFn: () => apiRequest<ChannelGrantCandidate[]>("/api/v1/channel/grants"),
 });
 
 // useChannelGrantList 获取分组页可选的全部渠道授权。
 export function useChannelGrantList(enabled = true) {
-    return useQuery({ ...channelGrantListQueryOptions, enabled, refetchOnMount: 'always' });
+  return useQuery({
+    ...channelGrantListQueryOptions,
+    enabled,
+    refetchOnMount: "always",
+  });
+}
+
+// useChannelGrantPreview 按 Go 正则实时预览规则命中的授权候选, 供分组编辑器展示。
+// 仅作保存前的对照: 提交仍由服务端按规则重算, 前端不提交预览结果。
+// 不可用候选一并返回, 由界面标出"不会加入"。
+export function useChannelGrantPreview(pattern: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["channels", "grants", "preview", pattern],
+    queryFn: ({ signal }) =>
+      apiRequest<ChannelGrantCandidate[]>("/api/v1/channel/grants/preview", {
+        method: "POST",
+        body: { pattern },
+        signal,
+      }),
+    enabled,
+    // 输入驱动的预览: 非法正则 400 重试无意义, 网络错误也以即时反馈为先。
+    retry: false,
+  });
 }
 
 // channelStatsFormattedQueryOptions 统一渠道统计查询, 格式化和刷新策略。
 // 与配置分开刷新: 统计每次转发都在变, 配置只在人工改动后由 mutation 失效。
 const channelStatsFormattedQueryOptions = queryOptions({
-    ...channelStatsQueryOptions,
-    select: (data) => data.map((item): ChannelStatsFormatted => ({
-        channel_id: item.channel_id,
-        channel_name: item.channel_name,
-        enabled: item.enabled,
-        models: item.models.map((channelModel) => ({
-            model_id: channelModel.model_id,
-            model_name: channelModel.model_name,
-            formatted: formatStatsMetrics(channelModel),
-        })),
-        formatted: formatStatsMetrics(item),
+  ...channelStatsQueryOptions,
+  select: (data) =>
+    data.map((item): ChannelStatsFormatted => ({
+      channel_id: item.channel_id,
+      channel_name: item.channel_name,
+      enabled: item.enabled,
+      models: item.models.map((channelModel) => ({
+        model_id: channelModel.model_id,
+        model_name: channelModel.model_name,
+        formatted: formatStatsMetrics(channelModel),
+      })),
+      formatted: formatStatsMetrics(item),
     })),
-    refetchInterval: 30000,
-    refetchOnMount: 'always',
+  refetchInterval: 30000,
+  refetchOnMount: "always",
 });
 
 // useChannelStats 获取全部渠道及其模型的展示用统计, 也是渠道列表页的数据来源。
 export function useChannelStats(enabled = true) {
-    return useQuery({ ...channelStatsFormattedQueryOptions, enabled });
+  return useQuery({ ...channelStatsFormattedQueryOptions, enabled });
 }
 
 /**
@@ -170,12 +206,12 @@ export function useChannelStats(enabled = true) {
  * const { data: detail } = useChannelDetail(channelId);
  */
 export function useChannelDetail(id?: number) {
-    return useQuery({
-        queryKey: ['channels', 'detail', id],
-        queryFn: () => apiRequest<ChannelDetail>(`/api/v1/channel/detail/${id}`),
-        enabled: id !== undefined,
-        refetchOnMount: 'always',
-    });
+  return useQuery({
+    queryKey: ["channels", "detail", id],
+    queryFn: () => apiRequest<ChannelDetail>(`/api/v1/channel/detail/${id}`),
+    enabled: id !== undefined,
+    refetchOnMount: "always",
+  });
 }
 
 /**
@@ -196,16 +232,21 @@ export function useChannelDetail(id?: number) {
  * });
  */
 export function useCreateChannel() {
-    const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
 
-    return useMutation({
-        mutationFn: (data: ChannelDetail) =>
-            apiRequest<ChannelDetail>('/api/v1/channel/create', { method: 'POST', body: data }),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['channels'] });
-            queryClient.invalidateQueries({ queryKey: modelListQueryOptions.queryKey });
-        },
-    });
+  return useMutation({
+    mutationFn: (data: ChannelDetail) =>
+      apiRequest<ChannelDetail>("/api/v1/channel/create", {
+        method: "POST",
+        body: data,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["channels"] });
+      queryClient.invalidateQueries({
+        queryKey: modelListQueryOptions.queryKey,
+      });
+    },
+  });
 }
 
 /**
@@ -219,62 +260,78 @@ export function useCreateChannel() {
  * updateChannel.mutate({ ...detail, enabled: false });
  */
 export function useUpdateChannel() {
-    const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
 
-    return useMutation({
-        mutationFn: (data: ChannelDetail) =>
-            apiRequest<ChannelDetail>('/api/v1/channel/update', { method: 'POST', body: data }),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['channels'] });
-            queryClient.invalidateQueries({ queryKey: modelListQueryOptions.queryKey });
-            queryClient.invalidateQueries({ queryKey: groupListQueryOptions.queryKey });
-        },
-    });
+  return useMutation({
+    mutationFn: (data: ChannelDetail) =>
+      apiRequest<ChannelDetail>("/api/v1/channel/update", {
+        method: "POST",
+        body: data,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["channels"] });
+      queryClient.invalidateQueries({
+        queryKey: modelListQueryOptions.queryKey,
+      });
+      queryClient.invalidateQueries({
+        queryKey: groupListQueryOptions.queryKey,
+      });
+    },
+  });
 }
 
 /**
  * 删除渠道 Hook
- * 
+ *
  * @example
  * const deleteChannel = useDeleteChannel();
- * 
+ *
  * deleteChannel.mutate(1); // 删除 ID 为 1 的渠道
  */
 export function useDeleteChannel() {
-    const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
 
-    return useMutation({
-        mutationFn: (id: number) =>
-            apiRequest<null>(`/api/v1/channel/delete/${id}`, { method: 'DELETE' }),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['channels'] });
-            queryClient.invalidateQueries({ queryKey: modelListQueryOptions.queryKey });
-            queryClient.invalidateQueries({ queryKey: groupListQueryOptions.queryKey });
-        },
-    });
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiRequest<null>(`/api/v1/channel/delete/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["channels"] });
+      queryClient.invalidateQueries({
+        queryKey: modelListQueryOptions.queryKey,
+      });
+      queryClient.invalidateQueries({
+        queryKey: groupListQueryOptions.queryKey,
+      });
+    },
+  });
 }
 
 /**
  * 启用/禁用渠道 Hook
- * 
+ *
  * @example
  * const enableChannel = useEnableChannel();
- * 
+ *
  * enableChannel.mutate({ id: 1, enabled: true }); // 启用 ID 为 1 的渠道
  * enableChannel.mutate({ id: 1, enabled: false }); // 禁用 ID 为 1 的渠道
  */
 export function useEnableChannel() {
-    const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
 
-    return useMutation({
-        mutationFn: (data: { id: number; enabled: boolean }) =>
-            apiRequest<null>('/api/v1/channel/enable', { method: 'POST', body: data }),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['channels'] });
-            // 渠道启停会改变其授权在分组内的可用性，成员列表要跟着刷新。
-            queryClient.invalidateQueries({ queryKey: groupListQueryOptions.queryKey });
-        },
-    });
+  return useMutation({
+    mutationFn: (data: { id: number; enabled: boolean }) =>
+      apiRequest<null>("/api/v1/channel/enable", {
+        method: "POST",
+        body: data,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["channels"] });
+      // 渠道启停会改变其授权在分组内的可用性，成员列表要跟着刷新。
+      queryClient.invalidateQueries({
+        queryKey: groupListQueryOptions.queryKey,
+      });
+    },
+  });
 }
 
 /**
@@ -292,8 +349,11 @@ export function useEnableChannel() {
  * fetchModel.data // [{ name: 'gpt-4o', protocols: 4 }, ...]
  */
 export function useFetchModel() {
-    return useMutation({
-        mutationFn: (data: FetchModelRequest) =>
-            apiRequest<FetchModel[]>('/api/v1/channel/fetch-model', { method: 'POST', body: data }),
-    });
+  return useMutation({
+    mutationFn: (data: FetchModelRequest) =>
+      apiRequest<FetchModel[]>("/api/v1/channel/fetch-model", {
+        method: "POST",
+        body: data,
+      }),
+  });
 }

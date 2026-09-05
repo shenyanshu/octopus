@@ -68,16 +68,16 @@ func GroupGetByName(name string) (model.Group, error) {
 	return groupSnapshot(group), nil
 }
 
-// ApplyGroupMemberDeltas 把渠道提交的成员存活事实套用到分组缓存。
-// 提交后刷新失败时缓存已陈旧: 不校正的话, 下一次请求会从陈旧缓存里选到已删成员。
-// 只动受影响分组, 存活成员条目原样保留; 事实来自事务内已提交读, 此处不再查库。
+// ApplyGroupMemberDeltas 把渠道提交的成员变更事实套用到分组缓存。
+// 提交后刷新失败时缓存已陈旧: 不校正的话, 删除侧会让下一次请求选到已删成员, 添加侧会让新成员永久漏在缓存外。
+// 只动受影响分组; 删除侧保留存活成员条目, 添加侧并入携带的新成员行, 事实来自事务内已提交读, 此处不再查库。
 func ApplyGroupMemberDeltas(deltas []GroupMembersDelta) {
 	for _, delta := range deltas {
 		group, ok := groupCache.Get(delta.GroupID)
 		if !ok {
 			continue
 		}
-		survivors := make([]model.GroupItem, 0, len(delta.ItemIDs))
+		survivors := make([]model.GroupItem, 0, len(delta.ItemIDs)+len(delta.AddedItems))
 		for _, item := range group.Items {
 			for _, id := range delta.ItemIDs {
 				if item.ID == id {
@@ -86,6 +86,17 @@ func ApplyGroupMemberDeltas(deltas []GroupMembersDelta) {
 				}
 			}
 		}
+		// 添加侧按主键去重后并入: 成功路径的整表刷新不会走到这里, 此处补的是刷新失败漏掉的新行。
+		ids := make(map[int]struct{}, len(survivors))
+		for _, item := range survivors {
+			ids[item.ID] = struct{}{}
+		}
+		for _, item := range delta.AddedItems {
+			if _, ok := ids[item.ID]; !ok {
+				survivors = append(survivors, item)
+			}
+		}
+		sortGroupItems(survivors)
 		group.Items = survivors
 		groupCache.Set(group.ID, group)
 	}
@@ -110,17 +121,23 @@ func GroupItemUpdateScores(ctx context.Context, scores map[int]int) error {
 }
 
 // GroupCreate 创建分组及其成员并刷新缓存, 返回创建后的分组。
-// 成员的提交顺序即优先级顺序。
+// 成员的提交顺序即优先级顺序; 规则在同一事务内补齐当前匹配的可用授权,
+// 补齐失败与创建失败一样整体回滚, 缓存与 SSE 一概不发布。
 func GroupCreate(req *model.GroupCreateRequest, ctx context.Context) (*model.Group, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		return nil, fmt.Errorf("group name is required")
 	}
+	// 规则合法性在入口校验: 落库的 pattern 恒为可编译, 后续事务内补齐无需再防非法输入。
+	if _, err := model.CompileGroupPattern(req.AutoAddPattern); err != nil {
+		return nil, err
+	}
 	group := model.Group{
-		Name:        name,
-		Mode:        req.Mode,
-		RelayConfig: req.RelayConfig,
-		Items:       make([]model.GroupItem, len(req.Items)),
+		Name:           name,
+		Mode:           req.Mode,
+		AutoAddPattern: req.AutoAddPattern,
+		RelayConfig:    req.RelayConfig,
+		Items:          make([]model.GroupItem, len(req.Items)),
 	}
 	if group.Mode == "" {
 		group.Mode = model.GroupModeManual
@@ -129,9 +146,22 @@ func GroupCreate(req *model.GroupCreateRequest, ctx context.Context) (*model.Gro
 	for i, item := range req.Items {
 		group.Items[i] = model.GroupItem{ChannelGrantID: item.ChannelGrantID, Priority: i + 1, Enabled: true}
 	}
-	if err := db.GetDB().WithContext(ctx).Create(&group).Error; err != nil {
+	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&group).Error; err != nil {
+			return fmt.Errorf("failed to create group: %w", err)
+		}
+		if err := appendAutoMembers(tx, group.ID, group.AutoAddPattern, 0); err != nil {
+			return err
+		}
+		// 补齐发生在同一事务内, 重载后返回与缓存发布的才是含自动成员的完整形态。
+		if err := tx.Preload("Items").First(&group, group.ID).Error; err != nil {
+			return fmt.Errorf("failed to reload created group: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
+	sortGroupItems(group.Items)
 	groupCache.Set(group.ID, group)
 	groupNameIndex.Set(group.Name, group.ID)
 	snapshot := groupSnapshot(group)
@@ -160,6 +190,17 @@ func GroupUpdate(id int, req *model.GroupUpdateRequest, ctx context.Context) (*m
 		selectFields = append(selectFields, "mode")
 		updates.Mode = *req.Mode
 	}
+	// 生效规则: 未提交该字段时沿用现值; 提交空串即清除规则。
+	// 逐列点名写入使空串能落库: 按零值跳过会把"清除"静默变成"不变"。
+	effectivePattern := oldGroup.AutoAddPattern
+	if req.AutoAddPattern != nil {
+		if _, err := model.CompileGroupPattern(*req.AutoAddPattern); err != nil {
+			return nil, err
+		}
+		effectivePattern = *req.AutoAddPattern
+		selectFields = append(selectFields, "auto_add_pattern")
+		updates.AutoAddPattern = *req.AutoAddPattern
+	}
 	if req.RelayConfig != nil {
 		config := *req.RelayConfig
 		model.NormalizeGroupRelayConfig(&config)
@@ -175,7 +216,18 @@ func GroupUpdate(id int, req *model.GroupUpdateRequest, ctx context.Context) (*m
 			}
 		}
 		if req.Items != nil {
-			if err := syncGroupItems(tx, id, *req.Items); err != nil {
+			// 先把规则匹配项并入草稿再整体替换: 直接 sync 会把用户从草稿移除的仍匹配项删后重建,
+			// 丢主键/评分/禁用态; 并入后这些项走 existingByGrant 保留身份。规则只补缺不改排列。
+			merged, err := mergeAutoItems(tx, *req.Items, effectivePattern)
+			if err != nil {
+				return err
+			}
+			if err := syncGroupItems(tx, id, merged); err != nil {
+				return err
+			}
+		} else {
+			// 未提交成员列表(如仅改规则或配置): 不重排既有列表, 只按规则追加缺失匹配。
+			if err := appendAutoMembers(tx, id, effectivePattern, 0); err != nil {
 				return err
 			}
 		}

@@ -616,7 +616,7 @@ func TestChannelEnableGateBlocksForwardRecheck(t *testing.T) {
 		if item.ID == fixture.members[0].itemID {
 			// 禁用渠道并刷新缓存: GroupGateLock 在 handler 侧, 此处调 op 层。
 			// Forward 的 RLock 会等 op.ChannelEnabled 的写锁释放后才复核。
-			if err := op.ChannelEnabled(channelA, false, context.Background()); err != nil {
+			if _, err := op.ChannelEnabled(channelA, false, context.Background()); err != nil {
 				t.Errorf("禁用渠道失败: %v", err)
 			}
 		}

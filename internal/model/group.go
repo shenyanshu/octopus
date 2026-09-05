@@ -72,12 +72,13 @@ func NormalizeGroupRelayConfig(config *GroupRelayConfig) {
 
 // 客户端模型名称及其可手动选择或故障转移的上游分组。
 type Group struct {
-	ID           int              `json:"id" gorm:"primaryKey"`                                                                 // 分组主键。
-	Name         string           `json:"name" gorm:"unique;not null"`                                                          // 客户端请求使用的模型名称。
-	Mode         GroupMode        `json:"mode" gorm:"not null;default:manual" binding:"omitempty,oneof=manual failover scored"` // 选择成员的模式。
-	ActiveItemID int              `json:"active_item_id" gorm:"not null;default:0"`                                             // 手动模式指定的成员, 故障转移模式忽略该值, 0 表示未指定; 写入侧字段, 读取一律用响应中的 runtime.current_item_id, 出 JSON 仅为让备份转储带上它。
-	RelayConfig  GroupRelayConfig `json:"relay_config" gorm:"serializer:json"`                                                  // 该分组的 Relay 路由配置。
-	Items        []GroupItem      `json:"items" gorm:"foreignKey:GroupID;constraint:OnDelete:CASCADE"`                          // 该分组可手动选择或故障转移的分组项; 读取时恒为数组, 空集合也给出以免各消费方各自兜底。
+	ID             int              `json:"id" gorm:"primaryKey"`                                                                 // 分组主键。
+	Name           string           `json:"name" gorm:"unique;not null"`                                                          // 客户端请求使用的模型名称。
+	Mode           GroupMode        `json:"mode" gorm:"not null;default:manual" binding:"omitempty,oneof=manual failover scored"` // 选择成员的模式。
+	ActiveItemID   int              `json:"active_item_id" gorm:"not null;default:0"`                                             // 手动模式指定的成员, 故障转移模式忽略该值, 0 表示未指定; 写入侧字段, 读取一律用响应中的 runtime.current_item_id, 出 JSON 仅为让备份转储带上它。
+	AutoAddPattern string           `json:"auto_add_pattern" gorm:"not null;default:''"`                                          // 自动补充规则: 标准库正则, 匹配渠道模型名的授权在分组保存与渠道变更时自动补入; 空串关闭规则。旧转储缺省该字段时按空串导入, 旧分组行为不变。
+	RelayConfig    GroupRelayConfig `json:"relay_config" gorm:"serializer:json"`                                                  // 该分组的 Relay 路由配置。
+	Items          []GroupItem      `json:"items" gorm:"foreignKey:GroupID;constraint:OnDelete:CASCADE"`                          // 该分组可手动选择或故障转移的分组项; 读取时恒为数组, 空集合也给出以免各消费方各自兜底。
 }
 
 // 分组内一个可选择的渠道授权分组项。
@@ -103,20 +104,22 @@ type GroupItem struct {
 // 创建分组请求; 成员顺序即优先级顺序。
 // 不收主键与当前成员: 分组主键由数据库分配, 当前成员在创建后另行指定。
 type GroupCreateRequest struct {
-	Name        string           `json:"name" binding:"required"`                               // 客户端请求使用的模型名称。
-	Mode        GroupMode        `json:"mode" binding:"omitempty,oneof=manual failover scored"` // 选择成员的模式, 留空按手动。
-	RelayConfig GroupRelayConfig `json:"relay_config"`                                          // Relay 路由配置, 零值由后端补默认。
-	Items       []GroupItemInput `json:"items"`                                                 // 初始成员集合。
+	Name           string           `json:"name" binding:"required"`                               // 客户端请求使用的模型名称。
+	Mode           GroupMode        `json:"mode" binding:"omitempty,oneof=manual failover scored"` // 选择成员的模式, 留空按手动。
+	AutoAddPattern string           `json:"auto_add_pattern"`                                      // 自动补充规则, 空串关闭; 合法性由 model.CompileGroupPattern 单点校验。
+	RelayConfig    GroupRelayConfig `json:"relay_config"`                                          // Relay 路由配置, 零值由后端补默认。
+	Items          []GroupItemInput `json:"items"`                                                 // 初始成员集合。
 }
 
 // 分组普通配置, 成员和当前成员的变更请求; 分组主键走路径, 不进请求体。
 // 当前成员是分组的一个普通可选字段, 与其余字段共用本请求: 它不需要独立的权限, 审计或并发粒度。
 type GroupUpdateRequest struct {
-	Name         *string           `json:"name,omitempty"`                                                  // Name 仅在名称变更时发送。
-	Mode         *GroupMode        `json:"mode,omitempty" binding:"omitempty,oneof=manual failover scored"` // Mode 仅在选择模式变更时发送。
-	RelayConfig  *GroupRelayConfig `json:"relay_config,omitempty"`                                          // RelayConfig 仅在 Relay 配置变更时发送完整配置。
-	Items        *[]GroupItemInput `json:"items,omitempty"`                                                 // 新的成员集合, 整体替换; 提交顺序即优先级顺序。
-	ActiveItemID *int              `json:"active_item_id,omitempty"`                                        // 手动模式指定的当前成员, 0 表示取消选择; 用指针以便与"未提交该字段"区分。
+	Name           *string           `json:"name,omitempty"`                                                  // Name 仅在名称变更时发送。
+	Mode           *GroupMode        `json:"mode,omitempty" binding:"omitempty,oneof=manual failover scored"` // Mode 仅在选择模式变更时发送。
+	AutoAddPattern *string           `json:"auto_add_pattern,omitempty"`                                      // 自动补充规则, 仅在变更时发送; 指针区分"未提交保持不变"与"空串清除规则"。
+	RelayConfig    *GroupRelayConfig `json:"relay_config,omitempty"`                                          // RelayConfig 仅在 Relay 配置变更时发送完整配置。
+	Items          *[]GroupItemInput `json:"items,omitempty"`                                                 // 新的成员集合, 整体替换; 提交顺序即优先级顺序。
+	ActiveItemID   *int              `json:"active_item_id,omitempty"`                                        // 手动模式指定的当前成员, 0 表示取消选择; 用指针以便与"未提交该字段"区分。
 }
 
 // 提交分组成员时按渠道授权主键引用。

@@ -87,6 +87,14 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 		dump.Channels[i].ChannelConfig = config
 	}
 
+	// 自动补充规则与接口同口径校验: 落库的 pattern 恒为可编译, 后续运行期补齐无需再防非法输入。
+	// 导入本身不自动补齐成员, 也不改变评分落库隔离: 校验只挡非法 pattern 不落库。
+	for i := range dump.Groups {
+		if _, err := model.CompileGroupPattern(dump.Groups[i].AutoAddPattern); err != nil {
+			return nil, fmt.Errorf("import group %d: %w", dump.Groups[i].ID, err)
+		}
+	}
+
 	conn := db.GetDB().WithContext(ctx)
 	res := &model.DBImportResult{RowsAffected: map[string]int64{}}
 	err := conn.Transaction(func(tx *gorm.DB) error {
