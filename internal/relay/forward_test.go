@@ -118,7 +118,7 @@ func seedScoredGroup(t *testing.T, mode model.GroupMode, protocols model.Protoco
 		if err := dbConn.Create(&grant).Error; err != nil {
 			t.Fatalf("建授权失败: %v", err)
 		}
-		group.Items = append(group.Items, model.GroupItem{ChannelGrantID: grant.ID, Priority: i + 1})
+		group.Items = append(group.Items, model.GroupItem{ChannelGrantID: grant.ID, Priority: i + 1, Enabled: true})
 		fixture.members = append(fixture.members, memberFixture{channelID: channel.ID, upstream: upstream})
 	}
 	if err := dbConn.Create(&group).Error; err != nil {

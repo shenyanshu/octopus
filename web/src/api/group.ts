@@ -29,7 +29,8 @@ export interface GroupItem {
     model_name: string;
     key_name: string;
     protocols: number; // 该授权支持的 Protocol 位掩码。
-    available: boolean; // 为假表示该成员当前无法转发，但仍会列出以便移除。
+    enabled: boolean; // 为假表示该成员被排除在当前分组的所有路由模式之外，但仍保留在列表中。
+    available: boolean; // 为假表示该成员当前无法转发，但仍会列出以便管理。
 }
 
 // GroupRuntime 是分组的实时路由状态。
@@ -183,6 +184,20 @@ export function useUpdateGroup() {
         mutationFn: ({ id, ...data }: GroupUpdateRequest & { id: number }) =>
             apiRequest<Group>(`/api/v1/group/update/${id}`, { method: 'POST', body: data }),
         onSuccess: writeGroupCache,
+    });
+}
+
+// useSetGroupItemEnabled 切换分组成员在当前分组内的启用状态。
+export function useSetGroupItemEnabled() {
+    return useMutation({
+        mutationFn: (data: { group_id: number; item_id: number; enabled: boolean }) =>
+            apiRequest<Group>('/api/v1/group/item/enabled', { method: 'POST', body: data }),
+        onSuccess: writeGroupCache,
+        onError: (_error, variables) => {
+            // 成员或分组可能已被其他会话删除: 失败时让缓存回源，不沿用本地猜测。
+            void queryClient.invalidateQueries({ queryKey: groupListQueryOptions.queryKey });
+            void queryClient.invalidateQueries({ queryKey: ['groups', 'detail', variables.group_id] });
+        },
     });
 }
 

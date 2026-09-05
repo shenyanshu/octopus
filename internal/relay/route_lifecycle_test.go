@@ -100,7 +100,7 @@ func TestModeSwitchAwayKeepsFailoverRoutingUnchanged(t *testing.T) {
 	failover := group
 	failover.Mode = model.GroupModeFailover
 	// CurrentItemID 已清零, 故障转移必须按优先级取配置顺序首位 11, 与 22 的满分无关。
-	if item := pickGroupItem(failover); item.ID != 11 {
+	if item, _ := pickGroupItem(failover, nil); item.ID != 11 {
 		t.Fatalf("切到故障转移后选路 = %d, 想要配置顺序首位 11", item.ID)
 	}
 }

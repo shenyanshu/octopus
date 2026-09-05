@@ -24,7 +24,7 @@ func resetRoutesForTest() {
 func scoredGroupOf(itemIDs ...int) model.Group {
 	group := model.Group{ID: 1, Mode: model.GroupModeScored, Name: "scored-test"}
 	for _, id := range itemIDs {
-		group.Items = append(group.Items, model.GroupItem{ID: id, GroupID: group.ID, Available: true})
+		group.Items = append(group.Items, model.GroupItem{ID: id, GroupID: group.ID, Available: true, Enabled: true})
 	}
 	return group
 }
@@ -370,13 +370,13 @@ func TestAuthFailureClassification(t *testing.T) {
 
 func TestScoredRecordingIgnoresOtherModes(t *testing.T) {
 	resetRoutesForTest()
-	manual := model.Group{ID: 2, Mode: model.GroupModeManual, ActiveItemID: 7, Items: []model.GroupItem{{ID: 7}, {ID: 8}}}
-	if item := pickGroupItem(manual); item.ID != 7 {
+	manual := model.Group{ID: 2, Mode: model.GroupModeManual, ActiveItemID: 7, Items: []model.GroupItem{{ID: 7, Available: true, Enabled: true}, {ID: 8, Available: true, Enabled: true}}}
+	if item, _ := pickGroupItem(manual, nil); item.ID != 7 {
 		t.Fatalf("手动模式选路 = %d, 想要人工指定的 7", item.ID)
 	}
 
-	failover := model.Group{ID: 3, Mode: model.GroupModeFailover, Items: []model.GroupItem{{ID: 31}, {ID: 32}}}
-	if item := pickGroupItem(failover); item.ID != 31 {
+	failover := model.Group{ID: 3, Mode: model.GroupModeFailover, Items: []model.GroupItem{{ID: 31, Available: true, Enabled: true}, {ID: 32, Available: true, Enabled: true}}}
+	if item, _ := pickGroupItem(failover, nil); item.ID != 31 {
 		t.Fatalf("故障转移选路 = %d, 想要配置顺序首位 31", item.ID)
 	}
 
@@ -402,18 +402,19 @@ func TestFailoverCooldownSkipUnchanged(t *testing.T) {
 		ID:          4,
 		Mode:        model.GroupModeFailover,
 		RelayConfig: model.GroupRelayConfig{MemberMaxAttempts: 1, MemberCooldownSeconds: 60},
-		Items:       []model.GroupItem{{ID: 41}, {ID: 42}},
+		Items:       []model.GroupItem{{ID: 41, Available: true, Enabled: true}, {ID: 42, Available: true, Enabled: true}},
 	}
-	if item := pickGroupItem(group); item.ID != 41 {
+	item, foEpoch := pickGroupItem(group, nil)
+	if item.ID != 41 {
 		t.Fatalf("故障转移首次选路 = %d, 想要 41", item.ID)
 	}
-	if !recordRouteFailure(group, 41, 1) {
+	if !recordRouteFailure(group, 41, 1, foEpoch) {
 		t.Fatalf("达到总尝试次数应进入冷却")
 	}
-	if item := pickGroupItem(group); item.ID != 42 {
+	if item, _ := pickGroupItem(group, nil); item.ID != 42 {
 		t.Fatalf("冷却中的成员应被跳过, 选路 = %d, 想要 42", item.ID)
 	}
-	if item := pickGroupItem(group); item.ID != 42 {
+	if item, _ := pickGroupItem(group, nil); item.ID != 42 {
 		t.Fatalf("故障转移重复选路 = %d, 想要现任 42", item.ID)
 	}
 }

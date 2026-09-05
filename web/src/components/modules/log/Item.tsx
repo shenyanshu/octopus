@@ -1,12 +1,8 @@
-import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { AlertCircle, ArrowDownToLine, ArrowRight, ArrowUpFromLine, Clock, Cpu, Database, DollarSign, Loader2, Square } from 'lucide-react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { AlertCircle, ArrowRight, Loader2, Square } from 'lucide-react';
 import { useTranslations } from 'use-intl';
-import JsonView from '@uiw/react-json-view';
-import { githubDarkTheme } from '@uiw/react-json-view/githubDark';
-import { githubLightTheme } from '@uiw/react-json-view/githubLight';
-import { useTheme } from '@/provider/theme';
 import { type RelayLogOverview, useLogRequestBody, useLogResponseBody, useStopRound } from '@/api/log';
-import { useGroup, useUpdateGroup } from '@/api/group';
+import { type GroupItem, useGroup, useSetGroupItemEnabled, useUpdateGroup } from '@/api/group';
 import { Protocol } from '@/api/channel';
 import { getModelIcon } from '@/lib/model-icons';
 import { Badge } from '@/components/ui/badge';
@@ -14,36 +10,11 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { toast } from 'sonner';
-import { MemberStatus } from '@/components/modules/group/MemberStatus';
-import {
-    MorphingDialog,
-    MorphingDialogTrigger,
-    MorphingDialogContainer,
-    MorphingDialogContent,
-    MorphingDialogClose,
-    MorphingDialogTitle,
-    MorphingDialogDescription,
-    useMorphingDialog,
-} from '@/components/ui/morphing-dialog';
-
-// formatTime 将后端 RFC3339 时间转换为本地时分秒。
-function formatTime(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime()) || date.getUTCFullYear() === 1) return '--';
-    return date.toLocaleTimeString(undefined, {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-    });
-}
-
-// formatMilliseconds 将毫秒转换为紧凑耗时文本。
-function formatMilliseconds(value: number) {
-    const milliseconds = Math.max(0, value);
-    if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
-    return `${(milliseconds / 1000).toFixed(2)}s`;
-}
+import { JsonContent } from './JsonContent';
+import { LogMetrics } from './LogMetrics';
+import { LogGroupMemberRow } from './MemberRow';
+import { MorphingDialog, MorphingDialogTrigger, MorphingDialogContainer, MorphingDialogContent, MorphingDialogClose,
+    MorphingDialogTitle, MorphingDialogDescription, useMorphingDialog } from '@/components/ui/morphing-dialog';
 
 // PROTOCOL_LABELS 是协议位值对应的界面标识, 与渠道页和分组页的授权标签同一套词。
 // 键是单个协议位而非掩码组合: 日志记录的是本次请求与本轮上游各自实际使用的那一个协议。
@@ -53,85 +24,12 @@ const PROTOCOL_LABELS: Record<number, string> = {
     [Protocol.AnthropicMessage]: 'Message',
 };
 
-// LogMetrics 渲染耗时, 费用和 Token 指标; card 变体用于卡片栅格, footer 变体用于弹窗底部。
-function LogMetrics({ log, now, brandColor, variant }: { log: RelayLogOverview; now: number; brandColor: string; variant: 'card' | 'footer' }) {
-    const cachedTokens = log.usage.prompt_tokens_details?.cached_tokens ?? 0;
-    // 进行中的请求按共享时钟推算耗时, 结束后改用后端记录的最终耗时。
-    const duration = log.status === 'running' || log.status === 'committed'
-        ? formatMilliseconds(now - new Date(log.started_at).getTime())
-        : formatMilliseconds(log.duration / 1_000_000);
-    const metrics = [
-        { key: 'time', Icon: Clock, iconClassName: 'size-3.5 shrink-0', iconStyle: { color: brandColor } as CSSProperties, value: formatTime(log.started_at), valueClassName: 'tabular-nums', cellClassName: 'col-span-4 whitespace-nowrap md:col-span-1' },
-        { key: 'duration', Icon: Cpu, iconClassName: 'size-3.5 shrink-0 text-blue-500', value: duration, cellClassName: 'col-span-4 md:col-span-1' },
-        { key: 'cost', Icon: DollarSign, iconClassName: 'size-3.5 shrink-0 text-emerald-500', value: log.cost.toFixed(6), valueClassName: 'font-medium text-emerald-600 dark:text-emerald-400', cellClassName: 'col-span-4 md:col-span-1' },
-        { key: 'prompt', Icon: ArrowDownToLine, iconClassName: 'size-3.5 shrink-0 text-green-500', value: (log.usage.prompt_tokens - cachedTokens).toLocaleString(), cellClassName: 'col-span-3 md:col-span-1' },
-        { key: 'cached', Icon: Database, iconClassName: 'size-3.5 shrink-0 text-cyan-500', value: cachedTokens.toLocaleString(), cellClassName: 'col-span-3 md:col-span-1' },
-        { key: 'completion', Icon: ArrowUpFromLine, iconClassName: 'size-3.5 shrink-0 text-purple-500', value: log.usage.completion_tokens.toLocaleString(), cellClassName: 'col-span-3 md:col-span-1' },
-        { key: 'cacheWrite', Icon: Database, iconClassName: 'size-3.5 shrink-0 text-orange-500', value: (log.usage.prompt_tokens_details?.write_cached_tokens ?? 0).toLocaleString(), cellClassName: 'col-span-3 md:col-span-1' },
-    ];
-
-    return metrics.map((metric) => (
-        <div key={metric.key} className={cn('flex items-center gap-1.5', variant === 'card' && metric.cellClassName)}>
-            <metric.Icon className={metric.iconClassName} style={metric.iconStyle} />
-            <span className={metric.valueClassName}>{metric.value}</span>
-        </div>
-    ));
-}
-
 // ObservedRound 保存弹窗打开期间观察到的一轮上游请求状态。
 interface ObservedRound {
     round: number; // 当前请求内递增的轮次序号。
     channel: string; // 本轮实际请求的渠道名称。
     error: string; // 本轮最近一次上游错误。
     sending: boolean; // 本轮是否仍在等待上游响应。
-}
-
-// JsonContent 渲染请求或响应正文, 能解析为 JSON 时使用折叠视图, 否则按纯文本展示。
-function JsonContent({ content, fallbackText }: { content: string | object | undefined; fallbackText: string }) {
-    const { resolvedTheme } = useTheme();
-
-    const parsed = useMemo(() => {
-        if (content === undefined || content === '') return null;
-        if (typeof content !== 'string') return { isJson: true, data: content };
-        try {
-            return { isJson: true, data: JSON.parse(content) as object };
-        } catch {
-            return { isJson: false, data: content };
-        }
-    }, [content]);
-
-    if (!parsed) {
-        return (
-            <pre className="p-4 text-xs text-muted-foreground whitespace-pre-wrap wrap-break-word leading-relaxed">
-                {fallbackText}
-            </pre>
-        );
-    }
-
-    if (!parsed.isJson) {
-        return (
-            <pre className="p-4 text-xs text-muted-foreground whitespace-pre-wrap wrap-break-word font-mono leading-relaxed animate-in fade-in duration-200">
-                {parsed.data as string}
-            </pre>
-        );
-    }
-
-    return (
-        <div className="p-4 animate-in fade-in duration-200">
-            <JsonView
-                value={parsed.data as object}
-                style={{
-                    ...(resolvedTheme === 'dark' ? githubDarkTheme : githubLightTheme),
-                    fontSize: '12px',
-                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-                    backgroundColor: 'transparent',
-                }}
-                displayDataTypes={false}
-                displayObjectSize={false}
-                collapsed={false}
-            />
-        </div>
-    );
 }
 
 // LogDetail 渲染日志详情弹窗内容, 仅在弹窗打开期间挂载, 由此避免列表中的卡片持有详情查询和状态。
@@ -143,10 +41,13 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
     const [observedRoundKey, setObservedRoundKey] = useState(''); // observedRoundKey 是已记入 rounds 的最近一次日志快照, 用于跳过重复渲染。
     const [detailReady, setDetailReady] = useState(false); // 展开动画结束后才允许加载详情数据。
     const [switchingItemId, setSwitchingItemId] = useState<number | null>(null);
+    const [togglingItemId, setTogglingItemId] = useState<number | null>(null);
+    const togglingItemRef = useRef<number | null>(null);
     const requestBody = useLogRequestBody(log.id, log.started_at, detailReady && leftTab === 'request');
     const responseBody = useLogResponseBody(log.id, log.started_at, detailReady && log.status === 'success');
     const { data: activeGroup } = useGroup(log.group_id, detailReady, detailReady);
     const updateActiveItem = useUpdateGroup();
+    const setGroupItemEnabled = useSetGroupItemEnabled();
     const stopRound = useStopRound();
     const actualModel = log.target_model || log.model;
     const { Icon, className: iconClassName, color: brandColor } = getModelIcon(actualModel);
@@ -155,6 +56,7 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
     const responseCommitted = log.status === 'committed';
     const showRounds = log.status === 'running' || (requestFailed && rounds.length > 0);
     const isWaitingForSelection = log.status === 'running' && !log.sending && activeGroup?.mode === 'manual' && activeGroup.runtime.current_item_id === 0; // isWaitingForSelection 表示手动模式请求正等待选择渠道。
+    const routingBusy = switchingItemId !== null || togglingItemId !== null || stopRound.isPending;
 
     // 让弹窗先完成展开动画, 避免详情请求及其状态更新占用动画起步帧。
     useEffect(() => {
@@ -174,6 +76,52 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
                 ...current.filter((item) => item.round !== log.round),
             ];
         });
+    }
+
+    // 成员排除状态只作用于当前分组; 成功后由接口响应与分组事件统一刷新缓存。
+    async function handleToggleItemEnabled(item: GroupItem, enabled: boolean) {
+        if (!activeGroup || togglingItemRef.current !== null) return;
+        togglingItemRef.current = item.id;
+        setTogglingItemId(item.id);
+        try {
+            await setGroupItemEnabled.mutateAsync({ group_id: activeGroup.id, item_id: item.id, enabled });
+            if (enabled) {
+                toast.success(t('memberRestored'));
+            } else {
+                toast.success(t('memberExcluded'), {
+                    description: t('memberExcludedDescription'),
+                    action: {
+                        label: t('undo'),
+                        onClick: () => void handleToggleItemEnabled(item, true),
+                    },
+                });
+            }
+        } catch (cause) {
+            toast.error(enabled ? t('memberRestoreFailed') : t('memberExcludeFailed'), {
+                description: cause instanceof Error ? cause.message : undefined,
+            });
+        } finally {
+            togglingItemRef.current = null;
+            setTogglingItemId(null);
+        }
+    }
+
+    // 手动模式下点击成员行即切换当前成员; 被排除的成员不参与选择。
+    async function handleSelectItem(item: GroupItem) {
+        if (!activeGroup || activeGroup.mode !== 'manual' || !item.enabled || routingBusy) return;
+        setSwitchingItemId(item.id);
+        const isCurrent = activeGroup.runtime.current_item_id === item.id;
+        try {
+            await updateActiveItem.mutateAsync({ id: activeGroup.id, active_item_id: isCurrent ? 0 : item.id });
+            if (log.sending) {
+                await stopRound.mutateAsync({ requestId: log.id, round: log.round });
+            }
+            toast.success(isCurrent ? t('channelCleared') : t('channelChanged'));
+        } catch (cause) {
+            toast.error(t('channelChangeFailed'), { description: cause instanceof Error ? cause.message : undefined });
+        } finally {
+            setSwitchingItemId(null);
+        }
     }
 
     return (
@@ -247,45 +195,22 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
                             ) : (
                                 <div className="divide-y divide-border">
                                     {activeGroup.items.map((item) => {
-                                        const { Icon: ItemIcon, className: itemIconClassName } = getModelIcon(item.model_name);
                                         const itemCurrent = switchingItemId !== null
                                             ? item.id === switchingItemId
                                             : activeGroup.runtime.current_item_id === item.id;
                                         return (
-                                            <button
+                                            <LogGroupMemberRow
                                                 key={item.id}
-                                                type="button"
-                                                aria-pressed={itemCurrent}
-                                                disabled={activeGroup.mode !== 'manual' || switchingItemId !== null || stopRound.isPending}
-                                                onClick={async () => {
-                                                    if (activeGroup.mode !== 'manual') return;
-                                                    setSwitchingItemId(item.id);
-                                                    const isCurrent = activeGroup.runtime.current_item_id === item.id;
-                                                    try {
-                                                        await updateActiveItem.mutateAsync({ id: activeGroup.id, active_item_id: isCurrent ? 0 : item.id });
-                                                        if (log.sending) {
-                                                            await stopRound.mutateAsync({ requestId: log.id, round: log.round });
-                                                        }
-                                                        toast.success(isCurrent ? t('channelCleared') : t('channelChanged'));
-                                                    } catch (cause) {
-                                                        toast.error(t('channelChangeFailed'), { description: cause instanceof Error ? cause.message : undefined });
-                                                    } finally {
-                                                        setSwitchingItemId(null);
-                                                    }
-                                                }}
-                                                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition-colors hover:bg-muted/50 disabled:cursor-default disabled:hover:bg-transparent"
-                                            >
-                                                <ItemIcon aria-hidden="true" className={itemIconClassName} width={20} height={20} />
-                                                <span className="min-w-0 flex-1">
-                                                    <span className="block truncate font-semibold text-foreground">
-                                                        {item.model_name}
-                                                    </span>
-                                                    <span className="block truncate text-[11px] text-muted-foreground">
-                                                        {item.key_name ? `${item.channel_name} · ${item.key_name}` : item.channel_name}
-                                                    </span>
-                                                </span>
-                                                <MemberStatus group={activeGroup} itemId={item.id} now={now} active={itemCurrent} />
-                                            </button>
+                                                group={activeGroup}
+                                                item={item}
+                                                now={now}
+                                                itemCurrent={itemCurrent}
+                                                manualSelectionEnabled={activeGroup.mode === 'manual'}
+                                                routingBusy={routingBusy}
+                                                togglePending={togglingItemId === item.id}
+                                                onSelect={handleSelectItem}
+                                                onToggle={handleToggleItemEnabled}
+                                            />
                                         );
                                     })}
                                 </div>

@@ -9,6 +9,19 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 )
 
+// groupGate 是分组变更(写)与转发选路(读)的共享读写锁。
+// handlers 的变更编排(create/update/delete/toggle/channel mutation/import)持写锁覆盖
+// DB→缓存→路由→SSE 的完整序列, 使最终状态反映提交序;
+// Forward 选路后在网络发送前持读锁从最新快照复核成员可用性, 保证写期间的变更不穿透到旧缓存选路结果。
+// 读锁在网络发送前释放(不持锁等上游响应), 已派发的请求不受后续禁用影响。
+// 单实例: 无分布式抽象, 不新增依赖。
+var groupGate sync.RWMutex
+
+// GroupGateLock 获取分组变更写锁: handlers 调用以覆盖 DB→缓存→路由→SSE 的完整序列。
+// 与 Forward 选路后的读锁互斥, 使变更期间新请求读到最新已发布状态。
+func GroupGateLock()   { groupGate.Lock() }
+func GroupGateUnlock() { groupGate.Unlock() }
+
 // RouteState 是一个分组的进程内路由状态; 跨该分组的全部请求共享。
 // 同时作为路由流的消息形状与分组读取响应中的 runtime 字段: 冷却, 探测与亲和都是本包路由算法的概念,
 // 故状态形状由本包定义, 分组的持久化配置不含它; 内部标志未导出, 不会随消息出到 JSON。
@@ -131,16 +144,49 @@ func PruneRouteMembers(groupID int, itemIDs []int) {
 	route.epoch = routeEpochSeq.Add(1)
 }
 
+// ToggleRouteMemberEnabled 调整成员级启用状态对路由的影响:
+// 禁用当前承载成员时清出 CurrentItemID/ProbeItemID 与亲和, 但保留评分(成员仍存在于分组);
+// 启用使成员重新可选。两种方向都前进代数, 使在途请求的迟到结果不写回旧状态。
+// 与 PruneRouteMembers 不同: 后者删除成员的评分, 这里只清瞬态引用, 评分一律保留。
+func ToggleRouteMemberEnabled(groupID, itemID int, enabled bool) {
+	routeMu.Lock()
+	defer routeMu.Unlock()
+
+	route := routes[groupID]
+	if route == nil {
+		return
+	}
+	if !enabled {
+		if route.ProbeItemID == itemID {
+			route.ProbeItemID = 0
+		}
+		if route.CurrentItemID == itemID {
+			route.CurrentItemID = 0
+			route.AffinityUntil = 0
+			route.affinityArmed = false
+		}
+	}
+	route.epoch = routeEpochSeq.Add(1)
+	publishRouteLocked(route)
+}
+
 // pickGroupItem 按分组模式选择本轮目标成员, 没有可用成员时返回零值; group.Items 已按 Priority 升序排列。
-// 渠道是否可用不在此判断: 渠道禁用或缺少密钥由调用方发现并作为一轮失败上报, 该成员随即进入冷却而在后续轮次被跳过。
-func pickGroupItem(group model.Group) model.GroupItem {
+// excluded 是本请求内已确认本地不可用的成员, 故障转移模式跳过它们避免反复选同一不可用成员;
+// 手动模式不自动重选故不使用 excluded。
+// 所有模式统一以 item.Available 为选路门槛: 渠道/凭据/成员自身任一禁用即不参与选路。
+// 返回路由代数供成败上报核对: 重置后的新路由不再接受旧代数的迟到结果。
+func pickGroupItem(group model.Group, excluded map[int]bool) (model.GroupItem, uint64) {
 	if group.Mode == model.GroupModeManual {
 		for _, item := range group.Items {
 			if item.ID == group.ActiveItemID {
-				return item
+				// 手动模式不自动重选: 指定成员不可用即立即失败(零值)。
+				if !item.Available {
+					return model.GroupItem{}, 0
+				}
+				return item, 0
 			}
 		}
-		return model.GroupItem{}
+		return model.GroupItem{}, 0
 	}
 
 	routeMu.Lock()
@@ -152,12 +198,20 @@ func pickGroupItem(group model.Group) model.GroupItem {
 		route.AffinityUntil = 0
 	}
 
-	// 亲和期内沿用当前成员, 不提前探测已恢复的高优先级成员。
-	if route.CurrentItemID != 0 && route.AffinityUntil > now {
-		return itemOf(group, route.CurrentItemID)
+	// 亲和期内沿用当前成员, 不提前探测已恢复的高优先级成员; 成员不可用或已被本请求排除时不可沿用。
+	if current := itemOf(group, route.CurrentItemID); current.ID != 0 && route.AffinityUntil > now && current.Available && !excluded[current.ID] {
+		return current, route.epoch
 	}
 
 	for _, item := range group.Items {
+		// 不可用的成员不参与选路: 渠道/凭据/成员自身任一禁用均跳过。
+		if !item.Available {
+			continue
+		}
+		// 本请求已确认本地不可用的成员跳过: 避免反复选同一成员形成空转。
+		if excluded[item.ID] {
+			continue
+		}
 		// 遍历到当前成员说明比它优先级更高的成员都不可选, 沿用当前成员。
 		if item.ID == route.CurrentItemID {
 			break
@@ -173,21 +227,21 @@ func pickGroupItem(group model.Group) model.GroupItem {
 			}
 			route.ProbeItemID = item.ID
 			publishRouteLocked(route)
-			return item
+			return item, route.epoch
 		}
 		route.CurrentItemID = item.ID
 		publishRouteLocked(route)
-		return item
+		return item, route.epoch
 	}
-	if route.CurrentItemID != 0 {
-		return itemOf(group, route.CurrentItemID)
+	if route.CurrentItemID != 0 && itemOf(group, route.CurrentItemID).Available && !excluded[route.CurrentItemID] {
+		return itemOf(group, route.CurrentItemID), route.epoch
 	}
-	return model.GroupItem{}
+	return model.GroupItem{}, route.epoch
 }
 
 // recordRouteSuccess 上报故障转移模式的一轮成功: 结束该成员的冷却与探测占用, 并在故障切换后按配置开始亲和。
 // 评分模式的成功记账见 recordScoredSuccess, 不经过冷却与亲和。
-func recordRouteSuccess(group model.Group, itemID int) {
+func recordRouteSuccess(group model.Group, itemID int, epoch uint64) {
 	if group.Mode != model.GroupModeFailover {
 		return
 	}
@@ -196,7 +250,7 @@ func recordRouteSuccess(group model.Group, itemID int) {
 	defer routeMu.Unlock()
 
 	route := routes[group.ID]
-	if route == nil {
+	if route == nil || route.epoch != epoch {
 		return
 	}
 	now := time.Now().UnixMilli()
@@ -227,7 +281,7 @@ func recordRouteSuccess(group model.Group, itemID int) {
 
 // recordRouteFailure 上报故障转移模式的一轮失败: 达到配置的总尝试次数后将该成员打入冷却并让出当前路由, 返回是否已冷却。
 // failures 为该成员在本请求内包含首次请求的连续失败次数, 由调用方累计; 评分模式的失败记账见 recordScoredFailure。
-func recordRouteFailure(group model.Group, itemID, failures int) bool {
+func recordRouteFailure(group model.Group, itemID, failures int, epoch uint64) bool {
 	if group.Mode != model.GroupModeFailover {
 		return false
 	}
@@ -236,7 +290,7 @@ func recordRouteFailure(group model.Group, itemID, failures int) bool {
 	defer routeMu.Unlock()
 
 	route := routes[group.ID]
-	if route == nil {
+	if route == nil || route.epoch != epoch {
 		return false
 	}
 	// 探测请求只有一次机会, 常规成员达到配置的总尝试次数后进入冷却。
@@ -260,17 +314,25 @@ func recordRouteFailure(group model.Group, itemID, failures int) bool {
 }
 
 // releaseRouteProbe 归还未产生成败结论的探测占用, 用于请求被人工中止或客户端断开; 仅故障转移模式存在探测占用。
-func releaseRouteProbe(group model.Group, itemID int) {
+func releaseRouteProbe(group model.Group, itemID int, epoch uint64) {
 	if group.Mode != model.GroupModeFailover {
 		return
 	}
 	routeMu.Lock()
 	defer routeMu.Unlock()
 
-	if route := routes[group.ID]; route != nil && route.ProbeItemID == itemID {
+	if route := routes[group.ID]; route != nil && route.epoch == epoch && route.ProbeItemID == itemID {
 		route.ProbeItemID = 0
 		publishRouteLocked(route)
 	}
+}
+
+// abandonRoundBeforeDispatch 释放已选但尚未派发的本轮 probe 占用。
+// dispatch 点定义为 groupGate.RUnlock(): 在此之前的所有放弃路径都需调此函数,
+// 否则故障转移的 ProbeItemID 会永久泄漏。epoch 保证迟到的旧请求不会误清新 route 的 probe;
+// 手动/评分模式为 no-op; 幂等: route 已不存在或 ProbeItemID 已被清时安全跳过。
+func abandonRoundBeforeDispatch(group model.Group, itemID int, epoch uint64) {
+	releaseRouteProbe(group, itemID, epoch)
 }
 
 // groupRouteLocked 取出分组路由状态并清理已删除成员的残留; 调用方必须持有锁。

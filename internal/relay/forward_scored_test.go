@@ -60,20 +60,17 @@ func TestForwardScoredSkipsMemberWithMissingGrant(t *testing.T) {
 	mustScore(t, fixture, 1, scoreMax)
 }
 
-func TestForwardScoredAllMembersUnavailableWaits(t *testing.T) {
+func TestForwardScoredAllMembersUnavailableFailsImmediately(t *testing.T) {
 	fixture := seedScoredGroup(t, model.GroupModeScored, model.ProtocolOpenAIChatCompletion,
 		newUpstreamStub(t, passthroughGood), newUpstreamStub(t, passthroughGood))
 	mutateChannelConfig(t, fixture, 0, "enabled", false)
 	mutateChannelConfig(t, fixture, 1, "enabled", false)
 
-	// 全员本地不可用时沿用等待配置恢复的既有语义: 客户端取消即以取消终态返回, 不忙循环。
-	router := newForwardRouter()
-	ctx, cancel := context.WithCancel(context.Background())
-	rec := httptest.NewRecorder()
-	go router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(clientBody(false, false))).WithContext(ctx))
-	time.Sleep(200 * time.Millisecond)
-	cancel()
-	waitLatestRequestStatus(t, StatusCanceled, 3*time.Second)
+	// 全员不可用时立即失败, 不等待: 禁用不会自愈, 等待只会形成无界循环。
+	rec := postForward(newForwardRouter(), false, false)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("响应码 = %d, 想要 400 (立即失败)", rec.Code)
+	}
 	if hits := fixture.members[0].upstream.hits.Load() + fixture.members[1].upstream.hits.Load(); hits != 0 {
 		t.Fatalf("不可用成员收到 %d 次请求, 想要 0", hits)
 	}

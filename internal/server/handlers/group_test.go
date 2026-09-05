@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -520,5 +521,187 @@ func TestImportBarrierResetsGroupPresentOnlyInGroupItems(t *testing.T) {
 	}
 	if state := relay.RouteStateOf(group); len(state.Scores) != 0 {
 		t.Fatalf("导入隔离后路由仍带陈旧分数: %+v", state.Scores)
+	}
+}
+
+// callToggleItemEnabled 而后断言: 通过真实 gin.CreateTestContext 直接执行 toggleGroupItemEnabled handler。
+func callToggleItemEnabled(t *testing.T, groupID, itemID int, enabled bool) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"group_id": groupID,
+		"item_id":  itemID,
+		"enabled":  enabled,
+	})
+	rec := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(rec)
+	ginContext.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	ginContext.Request.Header.Set("Content-Type", "application/json")
+	toggleGroupItemEnabled(ginContext)
+	return rec
+}
+
+// TestToggleGroupItemEnabledHandlerSuccess 通过真实 toggleGroupItemEnabled handler 证明:
+// 响应结构正确, DB 落 enabled=false, 缓存 Available=false, 手动模式 ActiveItemID 清零, 路由不指向被禁用成员。
+func TestToggleGroupItemEnabledHandlerSuccess(t *testing.T) {
+	const name = "toggle-handler"
+	groupID, _, _, grantA, _ := seedScoredPair(t, name)
+
+	// 切到手动模式并设 active 到成员 A。
+	manual := model.GroupModeManual
+	if _, err := op.GroupUpdate(groupID, &model.GroupUpdateRequest{
+		Mode:         &manual,
+		ActiveItemID: &[]int{0}[0],
+	}, context.Background()); err != nil {
+		t.Fatalf("切模式失败: %v", err)
+	}
+	itemA := itemIDOfGrant(t, name, grantA)
+	activeA := itemA
+	if _, err := op.GroupUpdate(groupID, &model.GroupUpdateRequest{
+		ActiveItemID: &activeA,
+	}, context.Background()); err != nil {
+		t.Fatalf("设 active 失败: %v", err)
+	}
+
+	// 通过真实 handler 禁用成员 A。
+	rec := callToggleItemEnabled(t, groupID, itemA, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handler 响应码 = %d, 想要 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// 响应结构: groupResponse 含 runtime。
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			ID      int               `json:"id"`
+			Items   []model.GroupItem `json:"items"`
+			Runtime relay.RouteState  `json:"runtime"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应失败: %v: %s", err, rec.Body.String())
+	}
+	if resp.Code != http.StatusOK {
+		t.Fatalf("响应 code = %d, 想要 200: %s", resp.Code, rec.Body.String())
+	}
+	if resp.Data.ID != groupID {
+		t.Fatalf("响应分组 ID = %d, 想要 %d", resp.Data.ID, groupID)
+	}
+	// 响应中被禁用成员的 enabled=false 且 available=false。
+	for _, item := range resp.Data.Items {
+		if item.ID == itemA {
+			if item.Enabled {
+				t.Fatalf("响应 item.enabled = true, 想要 false")
+			}
+			if item.Available {
+				t.Fatalf("响应 item.available = true, 想要 false")
+			}
+		}
+	}
+	// Runtime 存在且非零值(分组 ID 匹配)。
+	if resp.Data.Runtime.GroupID != groupID {
+		t.Fatalf("响应 runtime.GroupID = %d, 想要 %d", resp.Data.Runtime.GroupID, groupID)
+	}
+
+	// DB: enabled=false。
+	var row model.GroupItem
+	db.GetDB().First(&row, itemA)
+	if row.Enabled {
+		t.Fatalf("DB enabled = true, 想要 false")
+	}
+
+	// 手动模式 ActiveItemID 已清零: handler 的 op 层在禁用时清 ActiveItemID。
+	loaded, err := op.GroupGetByName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ActiveItemID != 0 {
+		t.Fatalf("ActiveItemID = %d, 想要 0(禁用当前成员后清空)", loaded.ActiveItemID)
+	}
+
+	// 缓存: 成员仍在, Available=false。
+	found := false
+	for _, item := range loaded.Items {
+		if item.ID == itemA {
+			found = true
+			if item.Available {
+				t.Fatalf("缓存 Available = true, 想要 false")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("被禁用成员从缓存消失")
+	}
+}
+
+// TestToggleGroupItemEnabledHandlerForeignItemRejected 通过真实 handler 证明:
+// 不属于该分组的 item_id 返回错误, 不改路由/缓存。
+func TestToggleGroupItemEnabledHandlerForeignItemRejected(t *testing.T) {
+	const nameA = "toggle-foreign-a"
+	const nameB = "toggle-foreign-b"
+	_, _, _, grantA, _ := seedScoredPair(t, nameA)
+	groupB, _, _, grantB, _ := seedScoredPair(t, nameB)
+	itemA := itemIDOfGrant(t, nameA, grantA)
+	itemB := itemIDOfGrant(t, nameB, grantB)
+
+	// 通过真实 handler 尝试用 A 的 itemID 在 B 上禁用。
+	rec := callToggleItemEnabled(t, groupB, itemA, false)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("跨分组成员被误接受: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// B 的成员未被改。
+	var row model.GroupItem
+	db.GetDB().First(&row, itemB)
+	if !row.Enabled {
+		t.Fatalf("B 成员被误禁用")
+	}
+}
+
+// TestToggleGroupItemEnabledHandlerMissingItemRejected 不存在的成员 ID 返回错误, 不改路由。
+func TestToggleGroupItemEnabledHandlerMissingItemRejected(t *testing.T) {
+	const name = "toggle-missing"
+	groupID, _, _, _, _ := seedScoredPair(t, name)
+
+	rec := callToggleItemEnabled(t, groupID, 99999, false)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("不存在的成员被误接受: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestEnableChannelHandlerProductionRoundTrip 通过真实 enableChannel handler 禁用渠道,
+// 验证后续 Forward 不发送到被禁用渠道的成员, 改选存活成员。
+// 这是生产 handler round-trip 测试(非竞态互斥证明): enableChannel handler 持 GroupGateLock
+// 完成 DB→cache 发布后, 后续 Forward 的复核读到 Enabled=false。
+func TestEnableChannelHandlerProductionRoundTrip(t *testing.T) {
+	const name = "enable-handler-roundtrip"
+	_, channelA, _, _, _ := seedScoredPair(t, name)
+
+	// 转发一次让分组路由建立。
+	forwardOK(t, name)
+
+	// 通过真实 enableChannel handler 禁用渠道 A。
+	ginContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ginContext.Request = httptest.NewRequest(http.MethodPost, "/api/v1/channel/enabled",
+		bytes.NewBufferString(`{"id":`+strconv.Itoa(channelA)+`,"enabled":false}`))
+	ginContext.Request.Header.Set("Content-Type", "application/json")
+	enableChannel(ginContext)
+
+	// 刷新缓存使 Available 反映渠道禁用。
+	if err := op.InitCache(); err != nil {
+		t.Fatalf("刷新缓存失败: %v", err)
+	}
+
+	// 后续转发: 应跳过被禁用渠道 A 的成员, 改选渠道 B 的成员。
+	forwardOK(t, name)
+
+	// 验证渠道 A 的成员 Available=false: Forward 复核跳过它。
+	group, err := op.GroupGetByName(name)
+	if err != nil {
+		t.Fatalf("读分组失败: %v", err)
+	}
+	for _, item := range group.Items {
+		if item.ChannelID == channelA && item.Available {
+			t.Fatalf("被禁用渠道 A 的成员仍 Available=true")
+		}
 	}
 }

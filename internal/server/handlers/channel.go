@@ -94,6 +94,9 @@ func createChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
+	// 新建渠道可能被现有分组成员引用(授权引用渠道), 与 Forward 复核的读路径共享锁。
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	channel, err := op.ChannelCreate(&req, c.Request.Context())
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
@@ -116,6 +119,10 @@ func updateChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
 		return
 	}
+	// 渠道变更与分组变更共享读写锁: 持写锁覆盖 DB→缓存→路由→SSE 的完整序列,
+	// 使 Forward 选路后的复核读到最新已发布状态, 避免级联删除的旧缓存穿透。
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	// 渠道全量替换会删除未列出的凭据、模型与授权, 经外键级联删除分组成员。
 	// 提交前失败时 mutation 为 nil, 无从也无需校正; 提交后失败(缓存刷新失败)时携带提交事实,
 	// 级联删除不可回滚, 必须先按事实校正路由再报错, 否则在途请求会把已删成员写回评分表。
@@ -145,6 +152,9 @@ func enableChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
+	// 渠道启停直接影响成员 Available, 与 Forward 复核的读路径共享锁使状态发布线性化。
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	if err := op.ChannelEnabled(request.ID, request.Enabled, c.Request.Context()); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -158,6 +168,9 @@ func deleteChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
 		return
 	}
+	// 与 updateChannel 同一读写锁: 级联删除的缓存与路由校正不被 Forward 读路径穿透。
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	// 删除渠道会经外键级联删除其授权与引用它的分组成员; mutation 语义与更新入口相同。
 	mutation, err := op.ChannelDel(id, c.Request.Context())
 	reconcileChannelMutation(mutation)

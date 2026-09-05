@@ -143,7 +143,7 @@ func TestRestoreScoresBuildsDormantRouteInNonScoredModes(t *testing.T) {
 	}
 	group := mustGroupOf(t, fixture.id)
 	// 故障转移仍按配置顺序取首位, 休眠的 0 分不参与任何决策。
-	if item := pickGroupItem(group); item.ID != fixture.members[0].itemID {
+	if item, _ := pickGroupItem(group, nil); item.ID != fixture.members[0].itemID {
 		t.Fatalf("休眠分数影响了故障转移选路: %d", item.ID)
 	}
 }

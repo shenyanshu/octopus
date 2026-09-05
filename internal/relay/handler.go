@@ -24,6 +24,10 @@ import (
 )
 
 // Forward 按客户端协议承载一个请求的完整转发过程: 解析请求, 定位分组, 循环选目标请求上游, 直至提交响应或请求结束。
+// afterPickHook 是选路后、授权/渠道复核前的测试注入点; 生产为 nil, 不影响热路径。
+// 测试在此注入渠道禁用等竞态场景, 验证 handler 在快照与查询之间发现不可用时立即跳过。
+var afterPickHook func(group model.Group, item model.GroupItem)
+
 func Forward(format llm.APIFormat) gin.HandlerFunc {
 	// 客户端协议同时定出入站转换器和请求协议位: 后者随请求状态推给界面, 也是每轮选择上游协议的首选。
 	var inbound transformer.Inbound
@@ -80,6 +84,8 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 		failures := 0                  // 该成员包含首次请求的连续失败次数。
 		excluded := make(map[int]bool) // 本请求内不再选择的成员: 已跨网络边界尝试过或已确认本地不可用。
 
+		// 本地不可用连续计数: 超过成员数时说明缓存与数据库稳定不一致, 终止而非空转。
+		localUnavailableStreak := 0
 		for {
 			if ctx.Err() != nil {
 				request.markCanceled(ctx.Err(), "", nil)
@@ -97,19 +103,42 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 
 			// 手动模式取人工指定的成员, 故障转移模式按优先级选择未禁用且不在冷却中的成员,
 			// 评分模式在可用成员里选分数最高且本请求未排除的。
-			// 没有目标时等待重新选择, 期间人工切换渠道, 补齐成员或成员冷却到期即可让请求继续。
+			// 无目标时: 手动模式立即失败; 全员不可用(含空分组)立即失败;
+			// 仅故障转移存在冷却中的可用成员时等待, 让探测或冷却到期后继续。
 			var item model.GroupItem
 			var routeEpoch uint64
 			if group.Mode == model.GroupModeScored {
 				item, routeEpoch = pickScoredItem(group, excluded)
 			} else {
-				item = pickGroupItem(group)
+				item, routeEpoch = pickGroupItem(group, excluded)
 			}
 			if item.ID == 0 {
-				// 评分模式下成员尚存却无可选目标, 只可能是本请求已排除全部成员:
-				// 明确以失败终结, 等待重试会对同一批成员形成无界循环。
-				// 全员本地不可用(excluded 为空)时仍走等待, 让配置恢复后请求继续。
-				if group.Mode == model.GroupModeScored && len(excluded) > 0 && len(group.Items) > 0 {
+				// 手动模式: 指定成员不可用时立即失败, 不自动重选也不等待,
+				// 即使其他成员可用也不切换(手动模式的核心语义)。
+				if group.Mode == model.GroupModeManual {
+					failure := errors.New("manual active member unavailable")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
+				}
+				// 全员本地不可用(含空分组)时立即失败: 禁用/缺凭据不会自愈,
+				// 等待只会对同一批不可用成员形成无界循环。
+				// 故障转移模式存在冷却中的可用成员时仍走等待, 让冷却到期后请求继续。
+				anyAvailable := false
+				for _, m := range group.Items {
+					if m.Available {
+						anyAvailable = true
+						break
+					}
+				}
+				if !anyAvailable {
+					failure := errors.New("no available group member")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
+				}
+				// 评分模式: 可用成员被本请求排除后全部试完, 走已有的终态。
+				if group.Mode == model.GroupModeScored && len(excluded) > 0 {
 					failure := errors.New("all group members failed")
 					request.markFailed(failure, "", nil)
 					rejectRequest(c, inbound, failure)
@@ -121,16 +150,81 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				continue
 			}
 
-			// 成员指向的授权缺失, 凭据被停用或两侧已被删除时, 该成员当前本地不可用。
-			// 评分模式在请求内排除它并立即尝试下一个成员; 其余模式等待配置恢复, 行为不变。
-			// ChannelGrantGet 一次校验齐这几种情况, 取到的授权必然可直接转发, 无需再逐项检查。
-			grant, err := op.ChannelGrantGet(item.ChannelGrantID)
-			if err != nil {
+			// 测试注入点: 选路已选中 item 但尚未做授权/渠道复核。
+			// 注入渠道禁用等竞态, 验证复核时发现不可用即立即跳过。
+			if afterPickHook != nil {
+				afterPickHook(group, item)
+			}
+
+			// 持共享读锁从最新分组快照复核成员: 变更编排持写锁期间, 此处读到的是已发布的最新状态。
+			// 成员被禁用/删除/移除后, 快照不再含它或 Available=false → 本地不可用, 不发送请求。
+			// 读锁在网络发送前释放, 已派发的请求不受后续禁用影响。
+			groupGate.RLock()
+			latestGroup, latestErr := op.GroupGetByName(metadata.Model)
+			if latestErr != nil || latestGroup.ID != group.ID {
+				groupGate.RUnlock()
+				abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
+				localUnavailableStreak++
+				if localUnavailableStreak > len(group.Items) {
+					failure := errors.New("no available group member (group changed during dispatch)")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
+				}
 				if group.Mode == model.GroupModeScored {
 					excluded[item.ID] = true
-					continue
 				}
-				if !request.wait(ctx, group.RelayConfig.MemberRetryIntervalSeconds) {
+				continue
+			}
+			var latestItem model.GroupItem
+			for _, m := range latestGroup.Items {
+				if m.ID == item.ID {
+					latestItem = m
+					break
+				}
+			}
+			if latestItem.ID == 0 || !latestItem.Available || !latestItem.Enabled {
+				// 成员在快照与复核之间被禁用或删除: 本地不可用, 不计任何统计/冷却/分数。
+				groupGate.RUnlock()
+				abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
+				localUnavailableStreak++
+				if localUnavailableStreak > len(group.Items) {
+					failure := errors.New("no available group member (cache inconsistency)")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
+				}
+				if group.Mode == model.GroupModeScored {
+					excluded[item.ID] = true
+				} else if group.Mode == model.GroupModeFailover {
+					excluded[item.ID] = true
+				}
+				continue
+			}
+			item = latestItem
+			group = latestGroup
+
+			// 成员本地不可用(授权缺失/凭据停用/渠道被删或禁用): 发生在网络边界之前,
+			// 对所有模式都不计失败、不写统计、不扣分、不冷却, 释放读锁后重新选路。
+			// 手动模式重选后仍指向同一不可用成员 → 立即失败; 故障转移/评分排除该成员选下一个。
+			grant, err := op.ChannelGrantGet(item.ChannelGrantID)
+			if err != nil {
+				groupGate.RUnlock()
+				abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
+				localUnavailableStreak++
+				if localUnavailableStreak > len(group.Items) {
+					failure := errors.New("no available group member (cache inconsistency)")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
+				}
+				if group.Mode == model.GroupModeScored || group.Mode == model.GroupModeFailover {
+					excluded[item.ID] = true
+				}
+				if group.Mode == model.GroupModeManual {
+					failure := errors.New("manual active member unavailable")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
 					return
 				}
 				continue
@@ -138,22 +232,36 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			channelModel := grant.ChannelModel
 			channelKey := grant.ChannelKey
 
-			// 成员指向的渠道已被删除时同样视为本地不可用, 评分模式排除后换下一个。
+			// 渠道在快照与查询之间被禁用时同样为成员本地不可用: 不发送请求, 不计任何统计/冷却/分数。
 			channel, err := op.ChannelGet(channelModel.ChannelID)
-			if err != nil {
-				if group.Mode == model.GroupModeScored {
-					excluded[item.ID] = true
-					continue
+			if err != nil || !channel.Enabled {
+				groupGate.RUnlock()
+				abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
+				localUnavailableStreak++
+				if localUnavailableStreak > len(group.Items) {
+					failure := errors.New("no available group member (cache inconsistency)")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
 				}
-				if !request.wait(ctx, group.RelayConfig.MemberRetryIntervalSeconds) {
+				if group.Mode == model.GroupModeScored || group.Mode == model.GroupModeFailover {
+					excluded[item.ID] = true
+				}
+				if group.Mode == model.GroupModeManual {
+					failure := errors.New("manual active member unavailable")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
 					return
 				}
 				continue
 			}
+			localUnavailableStreak = 0
 
 			// 将分组成员配置的真实模型写入本轮上游请求。
 			raw.Body, err = sjson.SetBytes(raw.Body, "model", channelModel.Name)
 			if err != nil {
+				groupGate.RUnlock()
+				abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
 				request.markFailed(err, "", nil)
 				rejectRequest(c, inbound, err)
 				return
@@ -162,6 +270,8 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			if metadata.Streaming && format == llm.APIFormatOpenAIChatCompletion {
 				raw.Body, err = sjson.SetBytes(raw.Body, "stream_options.include_usage", true)
 				if err != nil {
+					groupGate.RUnlock()
+					abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
 					request.markFailed(err, "", nil)
 					rejectRequest(c, inbound, err)
 					return
@@ -172,12 +282,26 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			// 先于登记本轮目标: 选中的协议是本轮目标的一部分, 需与渠道和模型一并推给界面。
 			outbound, targetProtocol, passthrough, err := buildOutbound(channel, grant, *channelKey, requestProtocol)
 			if err != nil {
-				// 协议构造失败发生在网络边界之前, 归为成员本地错误。
-				err = markMemberLocal(err)
+				// 协议构造失败发生在网络边界之前, 归为成员本地错误: 不计统计/冷却/分数, 不消耗上游尝试。
+				// 手动模式立即失败; 故障转移/评分排除该成员选下一个。
+				groupGate.RUnlock()
+				abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
+				if group.Mode == model.GroupModeManual {
+					failure := errors.New("manual active member unavailable")
+					request.markFailed(failure, "", nil)
+					rejectRequest(c, inbound, failure)
+					return
+				}
+				excluded[item.ID] = true
+				continue
 			}
 
-			// 本轮即将跨越网络边界请求上游: 登记为本请求已排除的成员, 评分模式后续轮次不再选它。
+			// 本轮即将跨越网络边界请求上游: 登记为本请求已排除的成员, 后续轮次不再选它。
 			excluded[item.ID] = true
+
+			// 已从最新快照复核成员可用性并构造出站转换器, 请求即将派发: 释放读锁。
+			// 释放后发生的禁用只影响后续请求, 不中断已派发的本轮请求。
+			groupGate.RUnlock()
 
 			// 为本轮上游调用建立独立取消入口并登记当前目标; 取消原因用于区分人工中止与响应超时。
 			roundCtx, cancelRoundCause := context.WithCancelCause(ctx)
@@ -230,16 +354,30 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				request.finishRound(err.Error())
 				// 父上下文结束说明客户端已经取消, 归还探测占用并以取消终态结束请求。
 				if ctx.Err() != nil {
-					releaseRouteProbe(group, item.ID)
+					releaseRouteProbe(group, item.ID, routeEpoch)
 					request.markCanceled(ctx.Err(), "", nil)
 					return
 				}
 				// 仅人工中止本轮时不计失败也不等待; 响应超时属于真实失败并消耗尝试次数。
 				if context.Cause(roundCtx) == context.Canceled {
-					releaseRouteProbe(group, item.ID)
+					releaseRouteProbe(group, item.ID, routeEpoch)
 					continue
 				}
 				cancelRound()
+
+				// 统一处理成员本地错误(网络边界之前): 不写统计/冷却/分数, 不消耗上游尝试。
+				// 手动模式立即失败; 故障转移排除该成员选下一个; 评分模式排除该成员选下一个。
+				if classifyRoundFailure(err) == roundOutcomeMemberLocal {
+					abandonRoundBeforeDispatch(group, item.ID, routeEpoch)
+					if group.Mode == model.GroupModeManual {
+						failure := errors.New("manual active member unavailable")
+						request.markFailed(failure, "", nil)
+						rejectRequest(c, inbound, failure)
+						return
+					}
+					excluded[item.ID] = true
+					continue
+				}
 
 				// 评分模式按归因分类记账: 请求级与成员本地错误不写渠道统计也不扣分,
 				// 只有真实跨越网络边界的失败才归因渠道并影响评分。
@@ -279,7 +417,7 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 					failures = 1
 				}
 				// 达到总尝试次数时成员进入冷却并立即重新选路, 否则等待后重试。
-				if recordRouteFailure(group, item.ID, failures) {
+				if recordRouteFailure(group, item.ID, failures, routeEpoch) {
 					continue
 				}
 				if !request.wait(ctx, group.RelayConfig.MemberRetryIntervalSeconds) {
@@ -291,7 +429,7 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			request.finishRound("")
 			roundWaitTime := time.Since(roundStartedAt).Milliseconds() // 流式响应只统计等待首帧的时间。
 			// 上游成功后解除该成员的冷却与探测占用, 并按路由配置开始亲和。
-			recordRouteSuccess(group, item.ID)
+			recordRouteSuccess(group, item.ID, routeEpoch)
 			// 同协议透传时原样返回上游响应头; 跨协议响应没有需要透传的响应头。
 			for key, values := range result.header {
 				c.Writer.Header()[key] = values

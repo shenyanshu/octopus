@@ -1,5 +1,7 @@
 package model
 
+import "encoding/json"
+
 // 分组选择上游成员的模式。
 type GroupMode string
 
@@ -87,6 +89,7 @@ type GroupItem struct {
 	ChannelGrantID int           `json:"channel_grant_id" gorm:"not null;index:idx_group_grant,unique"`                // 引用的渠道授权 ID。
 	ChannelGrant   *ChannelGrant `json:"-" gorm:"foreignKey:ChannelGrantID;references:ID;constraint:OnDelete:CASCADE"` // 仅用于声明级联外键, 授权被删除时成员随之删除; 读取时不填充, 展示所需字段见下方。
 	Priority       int           `json:"priority" gorm:"not null"`                                                     // Priority 决定界面展示和故障转移模式下的成员切换顺序。
+	Enabled        bool          `json:"enabled" gorm:"not null;default:true"`                                         // 成员级启用开关: false 时该成员不参与选路但仍留在分组与列表中; DDL default:true 仅用于 AutoMigrate 建列与历史行回填, 应用层在创建时显式置 true 以避免 GORM 布尔零值陷阱。
 	Score          int           `json:"-" gorm:"not null;default:99"`                                                 // 评分模式的持久分数, 99 为未记录过的缺省值; 实时权威在 Relay 路由状态, 此列只是其定期快照。分组接口与逻辑备份不透出该列(json:"-"), 物理数据库/卷备份仍随库保留。
 
 	ChannelID   int      `json:"channel_id" gorm:"-"`   // 授权所属渠道 ID。
@@ -94,7 +97,7 @@ type GroupItem struct {
 	ModelName   string   `json:"model_name" gorm:"-"`   // 授权引用的上游模型名称。
 	KeyName     string   `json:"key_name" gorm:"-"`     // 授权引用的凭据名称。
 	Protocols   Protocol `json:"protocols" gorm:"-"`    // 授权支持的协议位掩码。
-	Available   bool     `json:"available" gorm:"-"`    // 渠道与凭据均启用且模型, 凭据均存在时为真; 为假表示该成员当前无法转发, 但仍需列出以便移除。
+	Available   bool     `json:"available" gorm:"-"`    // 渠道与凭据均启用且成员本身启用、模型与凭据均存在时为真; 为假表示该成员当前无法转发, 但仍需列出以便管理。
 }
 
 // 创建分组请求; 成员顺序即优先级顺序。
@@ -121,4 +124,31 @@ type GroupUpdateRequest struct {
 // 成员自身的主键不参与提交: 整体替换按授权主键匹配, 已有成员的主键与统计由后端保留。
 type GroupItemInput struct {
 	ChannelGrantID int `json:"channel_grant_id" binding:"required"` // 待引用的渠道授权 ID。
+}
+
+// UnmarshalJSON 为 GroupItem 补默认值: JSON 中缺省 enabled 时视为 true,
+// 使旧版备份(不含此字段)导入后成员默认启用而非被误禁用。
+// 显式 false 正常落 false, 显式 true 正常落 true。
+func (g *GroupItem) UnmarshalJSON(data []byte) error {
+	type alias GroupItem
+	raw := alias{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*g = GroupItem(raw)
+	// 检测原始 JSON 中是否存在 enabled 键: 不存在则补 true。
+	if !jsonHasKey(data, "enabled") {
+		g.Enabled = true
+	}
+	return nil
+}
+
+// jsonHasKey 检查 JSON 对象字节流中是否包含指定顶层键。
+func jsonHasKey(data []byte, key string) bool {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	_, ok := m[key]
+	return ok
 }

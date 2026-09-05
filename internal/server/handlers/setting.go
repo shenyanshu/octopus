@@ -153,6 +153,9 @@ func importDB(c *gin.Context) {
 	// 导入结束后作废陈旧 dirty 与受影响分组的路由状态, 防止旧快照把分数写到新身份上。
 	// 受影响分组取"显式导入的分组"与"载荷成员所属分组"的并集: 仅出现在 GroupItems 而不在 Groups
 	// 的成员同样可能复用主键, 其所属分组必须一并重置。
+	// 同时持 groupGate 写锁: 导入期间 Forward 读路径不穿过旧缓存, 导入完成后缓存与路由一致。
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	if err := relay.BeginScoreImportBarrier(c.Request.Context()); err != nil {
 		resp.Error(c, http.StatusInternalServerError, "score flush barrier timeout: "+err.Error())
 		return

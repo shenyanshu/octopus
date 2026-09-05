@@ -125,10 +125,42 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 		} else {
 			res.RowsAffected["channel_grants"] = n
 		}
+		// 导入前读出已存在的 GroupItem ID, 用于区分本次真正插入的新行与被跳过的旧行。
+		existingItemIDs := make(map[int]bool, 0)
+		if len(dump.GroupItems) > 0 {
+			ids := make([]int, 0, len(dump.GroupItems))
+			for _, item := range dump.GroupItems {
+				ids = append(ids, item.ID)
+			}
+			var found []int
+			if err := tx.Model(&model.GroupItem{}).Where("id IN ?", ids).Pluck("id", &found).Error; err != nil {
+				return fmt.Errorf("import group_items check existing: %w", err)
+			}
+			for _, id := range found {
+				existingItemIDs[id] = true
+			}
+		}
+		// createDoNothing 的 CreateInBatches 会把 GORM default:true 的列回写为 true,
+		// 故在调用前快照需要补写 false 的成员 ID, 之后用快照而非被回写的切片。
+		disabledNewItemIDs := make([]int, 0)
+		for _, item := range dump.GroupItems {
+			if !item.Enabled && !existingItemIDs[item.ID] {
+				disabledNewItemIDs = append(disabledNewItemIDs, item.ID)
+			}
+		}
 		if n, err := createDoNothing(tx, dump.GroupItems); err != nil {
 			return fmt.Errorf("import group_items: %w", err)
 		} else {
 			res.RowsAffected["group_items"] = n
+		}
+		// GORM 的 default:true 使 Create 把布尔零值(含显式 false)写为 true;
+		// 只对本批真正插入的新行(不在 existingItemIDs 中)补写 false,
+		// 已存在的行被 ON CONFLICT DO NOTHING 跳过, 既有值不被覆盖。
+		for _, id := range disabledNewItemIDs {
+			if err := tx.Model(&model.GroupItem{}).Where("id = ?", id).
+				Update("enabled", false).Error; err != nil {
+				return fmt.Errorf("import group_items enabled: %w", err)
+			}
 		}
 		if n, err := createUpsertAll(tx, dump.LLMInfos, []clause.Column{{Name: "name"}}); err != nil {
 			return fmt.Errorf("import llm_infos: %w", err)

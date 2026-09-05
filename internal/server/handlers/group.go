@@ -43,6 +43,10 @@ func init() {
 		AddRoute(
 			router.NewRoute("/delete/:id", http.MethodDelete).
 				Handle(deleteGroup),
+		).
+		AddRoute(
+			router.NewRoute("/item/enabled", http.MethodPost).
+				Handle(toggleGroupItemEnabled),
 		)
 }
 
@@ -69,7 +73,9 @@ type groupEvent struct {
 const groupEventBuffer = 16 // 单个分组事件流连接的非阻塞消息缓冲容量。
 
 var (
-	groupEventMu      sync.Mutex                           // groupEventMu 保护全部分组事件流连接。
+	groupEventMu sync.Mutex // groupEventMu 保护全部分组事件流连接。
+	// groupMutationMu 已统一到 relay.GroupGate(共享读写锁)。
+	// 变更编排持 groupGate 写锁覆盖 DB→缓存→路由→SSE 的完整序列; Forward 选路后持读锁复核。
 	groupEventStreams = make(map[chan groupEvent]struct{}) // 全部分组事件流 SSE 连接。
 )
 
@@ -175,6 +181,10 @@ func createGroup(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// 与 update/delete/toggle 同一写锁: 覆盖 DB→缓存→路由→SSE 发布,
+	// 防止 delete/create ID reuse 时旧 delete cleanup 晚于新 create publication。
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	group, err := op.GroupCreate(&req, c.Request.Context())
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
@@ -199,6 +209,8 @@ func updateGroup(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	oldGroup, err := op.GroupGet(id)
 	if err != nil {
 		resp.Error(c, http.StatusNotFound, err.Error())
@@ -254,6 +266,8 @@ func deleteGroup(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
 	if err := op.GroupDel(id, c.Request.Context()); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -261,4 +275,32 @@ func deleteGroup(c *gin.Context) {
 	relay.ResetRouteState(id)
 	publishGroupEvent(groupEvent{Name: "deleted", Data: id})
 	resp.Success(c, "group deleted successfully")
+}
+
+// toggleGroupItemEnabled 切换分组成员的启用状态: 禁用使成员不参与选路但仍留在分组中,
+// 启用使其重新可选; 两者都前进路由代数并刷新分组缓存, 路由状态与事件同步发布。
+// 同一分组的并发切换由 groupGate(共享读写锁) 串行化, 保证 DB→缓存→路由的最终状态反映提交序。
+func toggleGroupItemEnabled(c *gin.Context) {
+	var req struct {
+		GroupID int  `json:"group_id" binding:"required"`
+		ItemID  int  `json:"item_id" binding:"required"`
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
+
+	group, err := op.GroupItemSetEnabled(c.Request.Context(), req.GroupID, req.ItemID, req.Enabled)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// 启用切换不复用 PruneRouteMembers(后者会删评分): 评分是成员属性, 禁用只清瞬态引用。
+	relay.ToggleRouteMemberEnabled(req.GroupID, req.ItemID, req.Enabled)
+	response := groupResponse{Group: group, Runtime: relay.RouteStateOf(group)}
+	publishGroupEvent(groupEvent{Name: "changed", Data: response})
+	resp.Success(c, response)
 }

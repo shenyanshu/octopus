@@ -3,7 +3,6 @@ package op
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -128,7 +127,7 @@ func GroupCreate(req *model.GroupCreateRequest, ctx context.Context) (*model.Gro
 	}
 	model.NormalizeGroupRelayConfig(&group.RelayConfig)
 	for i, item := range req.Items {
-		group.Items[i] = model.GroupItem{ChannelGrantID: item.ChannelGrantID, Priority: i + 1}
+		group.Items[i] = model.GroupItem{ChannelGrantID: item.ChannelGrantID, Priority: i + 1, Enabled: true}
 	}
 	if err := db.GetDB().WithContext(ctx).Create(&group).Error; err != nil {
 		return nil, err
@@ -186,8 +185,23 @@ func GroupUpdate(id int, req *model.GroupUpdateRequest, ctx context.Context) (*m
 		// 当前成员在成员集合定稿后才写入: syncGroupItems 会清空指向已删除成员的当前成员,
 		// 先写会被它覆盖; 归属校验同样只对最终集合成立。
 		if req.ActiveItemID != nil {
-			if *req.ActiveItemID != 0 && !slices.ContainsFunc(group.Items, func(item model.GroupItem) bool { return item.ID == *req.ActiveItemID }) {
-				return fmt.Errorf("group item not found")
+			if *req.ActiveItemID != 0 {
+				// 指定的成员必须在最终成员集合中且处于启用状态: 禁用成员不可作为手动模式的当前成员。
+				var target model.GroupItem
+				found := false
+				for _, item := range group.Items {
+					if item.ID == *req.ActiveItemID {
+						target = item
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("group item not found")
+				}
+				if !target.Enabled {
+					return fmt.Errorf("group item is disabled")
+				}
 			}
 			if err := tx.Model(&model.Group{}).Where("id = ?", id).Update("active_item_id", *req.ActiveItemID).Error; err != nil {
 				return fmt.Errorf("failed to update active item: %w", err)
@@ -227,7 +241,7 @@ func syncGroupItems(tx *gorm.DB, groupID int, requested []model.GroupItemInput) 
 	for priority, requestedItem := range requested {
 		current, ok := existingByGrant[requestedItem.ChannelGrantID]
 		if !ok {
-			newItem := model.GroupItem{GroupID: groupID, ChannelGrantID: requestedItem.ChannelGrantID, Priority: priority + 1}
+			newItem := model.GroupItem{GroupID: groupID, ChannelGrantID: requestedItem.ChannelGrantID, Priority: priority + 1, Enabled: true}
 			if err := tx.Create(&newItem).Error; err != nil {
 				return fmt.Errorf("failed to create group item: %w", err)
 			}
@@ -330,7 +344,62 @@ func groupSnapshot(group model.Group) model.Group {
 			continue
 		}
 		group.Items[i].ChannelName = channel.Name
-		group.Items[i].Available = channel.Enabled && channelKey.Enabled
+		group.Items[i].Available = channel.Enabled && channelKey.Enabled && group.Items[i].Enabled
 	}
 	return group
+}
+
+// GroupItemSetEnabled 切换分组成员的启用状态。
+// 成员仍在分组与缓存中, 主键、优先级与评分一律保留; 禁用只影响选路。
+// 禁用当前人工指定的成员时清空 ActiveItemID(不自动重选); 手动模式恢复后也不自动选中。
+// 返回刷新后的分组快照, 供调用方发布事件与校正路由。
+func GroupItemSetEnabled(ctx context.Context, groupID, itemID int, enabled bool) (model.Group, error) {
+	group, ok := groupCache.Get(groupID)
+	if !ok {
+		return model.Group{}, fmt.Errorf("group not found")
+	}
+	belongs := false
+	for _, item := range group.Items {
+		if item.ID == itemID {
+			belongs = true
+			break
+		}
+	}
+	if !belongs {
+		return model.Group{}, fmt.Errorf("group item not found")
+	}
+
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// WHERE 同时约束 group_id 与 id: 防止跨分组的同 ID 成员被误改, 且精确匹配一行。
+		result := tx.Model(&model.GroupItem{}).
+			Where("id = ? AND group_id = ?", itemID, groupID).
+			Update("enabled", enabled)
+		if result.Error != nil {
+			return fmt.Errorf("failed to update group item enabled: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("group item not found")
+		}
+		// 禁用当前人工指定的成员时清空 ActiveItemID: 手动模式不自动重选,
+		// 留给前端在恢复后再显式指定; 其余模式忽略该字段。
+		if !enabled {
+			if err := tx.Model(&model.Group{}).
+				Where("id = ? AND active_item_id = ?", groupID, itemID).
+				Update("active_item_id", 0).Error; err != nil {
+				return fmt.Errorf("failed to clear active item: %w", err)
+			}
+		}
+		if err := tx.Preload("Items").First(&group, groupID).Error; err != nil {
+			return fmt.Errorf("failed to reload group: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return model.Group{}, err
+	}
+
+	sortGroupItems(group.Items)
+	groupCache.Set(group.ID, group)
+	groupNameIndex.Set(group.Name, group.ID)
+	return groupSnapshot(group), nil
 }
