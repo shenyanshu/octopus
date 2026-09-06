@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/bestruirui/octopus/internal/channelsync"
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -398,7 +399,7 @@ func TestReconcileChannelMutationOnPostCommitFailure(t *testing.T) {
 	}
 
 	// 模拟 op 在提交后刷新失败时交出的提交事实: 目标分组仅剩成员 B, 确有删除故 Removed 为真。
-	reconcileChannelMutation(&op.ChannelMutation{
+	channelsync.ApplyChannelMutation(&op.ChannelMutation{
 		GroupDeltas: []op.GroupMembersDelta{{GroupID: targetGroup.ID, ItemIDs: []int{itemB}, Removed: true}},
 	})
 	assertCascadeReconciled(t, target, bystander, itemA, itemC)
@@ -422,7 +423,7 @@ func TestPostCommitCacheReconcileKeepsSelectionOffDeletedMember(t *testing.T) {
 		t.Fatalf("删除成员行失败: %v", err)
 	}
 
-	reconcileChannelMutation(&op.ChannelMutation{
+	channelsync.ApplyChannelMutation(&op.ChannelMutation{
 		GroupDeltas: []op.GroupMembersDelta{{GroupID: targetGroup.ID, ItemIDs: []int{itemB}, Removed: true}},
 	})
 

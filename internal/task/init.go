@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/bestruirui/octopus/internal/channelsync"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/price"
@@ -16,6 +17,7 @@ const (
 	TaskStatsSave   = "stats_save"
 	TaskCleanLLM    = "clean_llm"
 	TaskScoreFlush  = "score_flush"
+	TaskModelSync   = "model_sync_interval"
 )
 
 func Init() {
@@ -52,4 +54,15 @@ func Init() {
 	}
 	statsSaveInterval := time.Duration(statsSaveIntervalMinutes) * time.Minute
 	Register(TaskStatsSave, statsSaveInterval, false, op.StatsSaveDBTask)
+
+	// 注册模型自动同步任务: 周期触发批量同步 auto_sync_models=true 的渠道。
+	modelSyncIntervalHours, err := op.SettingGetInt(model.SettingKeyModelSyncInterval)
+	if err != nil {
+		log.Warnf("failed to get model sync interval: %v", err)
+		return
+	}
+	modelSyncInterval := time.Duration(modelSyncIntervalHours) * time.Hour
+	Register(TaskModelSync, modelSyncInterval, false, func() {
+		channelsync.StartBatch()
+	})
 }

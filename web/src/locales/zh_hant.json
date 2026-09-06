@@ -153,6 +153,12 @@
       "label": "統計保存週期（分鐘）",
       "placeholder": "請輸入週期（分鐘）"
     },
+    "modelSyncInterval": {
+      "label": "模型同步週期（小時）",
+      "placeholder": "1–168",
+      "hint": "對已開啟自動同步的渠道生效",
+      "invalid": "請輸入 1 到 168 的整數小時數"
+    },
     "corsAllowOrigins": {
       "label": "CORS 跨網域白名單",
       "hint": "為空禁止跨網域，* 允許所有",
@@ -472,6 +478,8 @@
       "apiKey": "API Key",
       "enabled": "啟用",
       "proxy": "使用代理",
+      "autoSyncModels": "自動同步模型",
+      "autoSyncModelsHint": "開啟後按系統週期逐憑據補充模型，只增不刪；關閉不會刪除已有模型。",
       "keys": "憑證",
       "keyAdd": "新增憑證",
       "keyName": "名稱",
@@ -500,10 +508,37 @@
       "submit": "建立",
       "save": "儲存",
       "cancel": "取消",
+      "conflict": "該渠道已在別處更新，當前草稿不是最新。",
+      "conflictReload": "重新載入",
+      "conflictConfirm": "重新載入將丟棄當前未保存的修改，確定繼續？",
+      "conflictConfirmButton": "確認重載",
+      "conflictCancel": "取消",
+      "conflictReloadFailed": "重新載入失敗，請重試；草稿已保留。",
       "backToStats": "返回統計",
       "grantClearAll": "清空全部模型",
       "modelRemove": "移除模型",
       "grantRemove": "移除該憑據的授權"
+    },
+    "sync": {
+      "status": {
+        "idle": "未同步",
+        "running": "同步中",
+        "success": "同步成功",
+        "partial": "部分成功",
+        "failed": "同步失敗",
+        "skipped": "已跳過"
+      },
+      "syncNow": "立即同步",
+      "disabledChannel": "渠道已禁用，無法同步",
+      "added": "新增 {models} 個模型、{grants} 條授權",
+      "toastStarted": "已開始同步",
+      "toastBusy": "同步正在進行中",
+      "toastSkipped": "已跳過：需要啟用的渠道與憑據",
+      "batchSync": "同步自動渠道",
+      "batchSyncHint": "同步已開啟自動同步的渠道",
+      "batchStarted": "已開始同步 {count} 個渠道",
+      "batchBusy": "{count} 個渠道正在同步中",
+      "batchNone": "暫無可同步的渠道"
     }
   }
 }

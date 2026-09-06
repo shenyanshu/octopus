@@ -8,7 +8,19 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/google/uuid"
 )
+
+// channelDetailFromDBForTest 从 DB 组装渠道详情, 供需要编辑表单的测试使用。
+// 替代旧 channelDetailFromDBForTest(t, channel) 的基于缓存的组装路径。
+func channelDetailFromDBForTest(t *testing.T, channel model.Channel) model.ChannelDetail {
+	t.Helper()
+	detail, err := ChannelDetailGet(context.Background(), channel.ID)
+	if err != nil {
+		t.Fatalf("ChannelDetailGet(%d) 失败: %v", channel.ID, err)
+	}
+	return detail
+}
 
 // 本文件证明渠道写操作的提交边界: 级联已提交但缓存刷新失败时,
 // 必须以类型化错误携带提交事实(受影响分组与存活成员), 而不是让级联影响随错误一起丢失。
@@ -36,7 +48,7 @@ func seedCommitChannel(t *testing.T) commitSeedFixture {
 	}
 	seed := commitSeedFixture{}
 
-	master := model.Channel{ChannelConfig: model.ChannelConfig{Name: "commit-master", Enabled: true, BaseURL: "http://master.example"}}
+	master := model.Channel{ChannelConfig: model.ChannelConfig{Name: "commit-master", Enabled: true, BaseURL: "http://master.example"}, Revision: uuid.NewString()}
 	if err := dbConn.Create(&master).Error; err != nil {
 		t.Fatalf("建主渠道失败: %v", err)
 	}
@@ -59,7 +71,7 @@ func seedCommitChannel(t *testing.T) commitSeedFixture {
 	}
 	seed.grantA, seed.grantB = grants[0], grants[1]
 
-	side := model.Channel{ChannelConfig: model.ChannelConfig{Name: "commit-side", Enabled: true, BaseURL: "http://side.example"}}
+	side := model.Channel{ChannelConfig: model.ChannelConfig{Name: "commit-side", Enabled: true, BaseURL: "http://side.example"}, Revision: uuid.NewString()}
 	if err := dbConn.Create(&side).Error; err != nil {
 		t.Fatalf("建旁渠道失败: %v", err)
 	}
@@ -181,7 +193,7 @@ func TestChannelUpdatePostCommitRefreshFailure(t *testing.T) {
 	if !ok {
 		t.Fatalf("渠道缓存缺失")
 	}
-	detail := channelDetail(channel)
+	detail := channelDetailFromDBForTest(t, channel)
 	kept := make([]model.ChannelGrantConfig, 0, len(detail.Grants))
 	for _, grant := range detail.Grants {
 		if grant.ModelName == "m0" && grant.KeyName == "k0" {

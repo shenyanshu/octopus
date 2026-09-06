@@ -11,6 +11,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/google/uuid"
 )
 
 // TestMain 建立测试数据库: 逻辑导出/导入只经数据库, 不依赖运行时缓存。
@@ -34,7 +35,7 @@ func TestMain(m *testing.M) {
 func seedGroupItemForBackup(t *testing.T, name string) model.GroupItem {
 	t.Helper()
 	gormDB := db.GetDB()
-	channel := model.Channel{ChannelConfig: model.ChannelConfig{
+	channel := model.Channel{Revision: uuid.NewString(), ChannelConfig: model.ChannelConfig{
 		Name: "backup-seed-" + name, Enabled: true, BaseURL: "http://backup-seed.example",
 	}}
 	if err := gormDB.Create(&channel).Error; err != nil {

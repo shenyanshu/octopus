@@ -153,6 +153,12 @@
       "label": "Stats Save Interval",
       "placeholder": "Enter interval in minutes"
     },
+    "modelSyncInterval": {
+      "label": "Model sync interval (hours)",
+      "placeholder": "1–168",
+      "hint": "Applies to channels with auto-sync enabled",
+      "invalid": "Enter an integer between 1 and 168"
+    },
     "corsAllowOrigins": {
       "label": "CORS Allowed Origins",
       "hint": "Empty = deny all, * = allow all",
@@ -472,6 +478,8 @@
       "apiKey": "API Key",
       "enabled": "Enabled",
       "proxy": "Use proxy",
+      "autoSyncModels": "Auto-sync models",
+      "autoSyncModelsHint": "When enabled, models are topped up per key on the system interval. Add-only: turning it off never removes existing models.",
       "keys": "Credentials",
       "keyAdd": "Add credential",
       "keyName": "Name",
@@ -500,10 +508,37 @@
       "submit": "Create",
       "save": "Save",
       "cancel": "Cancel",
+      "conflict": "This channel was updated elsewhere; your draft is stale.",
+      "conflictReload": "Reload",
+      "conflictConfirm": "Reloading discards your unsaved changes. Continue?",
+      "conflictConfirmButton": "Discard & reload",
+      "conflictCancel": "Cancel",
+      "conflictReloadFailed": "Reload failed; your draft was kept. Try again.",
       "backToStats": "Back to Stats",
       "grantClearAll": "Clear all models",
       "modelRemove": "Remove model",
       "grantRemove": "Remove this key’s grant"
+    },
+    "sync": {
+      "status": {
+        "idle": "Not synced",
+        "running": "Syncing",
+        "success": "Synced",
+        "partial": "Partially synced",
+        "failed": "Sync failed",
+        "skipped": "Skipped"
+      },
+      "syncNow": "Sync now",
+      "disabledChannel": "Channel is disabled",
+      "added": "+{models} models, +{grants} grants",
+      "toastStarted": "Sync started",
+      "toastBusy": "Sync already in progress",
+      "toastSkipped": "Skipped: channel and key must be enabled",
+      "batchSync": "Sync auto channels",
+      "batchSyncHint": "Sync channels with auto-sync enabled",
+      "batchStarted": "Started syncing {count} channels",
+      "batchBusy": "{count} channels already syncing",
+      "batchNone": "No channels available to sync"
     }
   }
 }

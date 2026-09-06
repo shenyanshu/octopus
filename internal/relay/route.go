@@ -22,6 +22,11 @@ var groupGate sync.RWMutex
 func GroupGateLock()   { groupGate.Lock() }
 func GroupGateUnlock() { groupGate.Unlock() }
 
+// GroupGateRLock 获取分组变更读锁: 读侧(GET detail)持读锁从 DB 组装一致的渠道详情,
+// 与写锁互斥但允许多个读侧并发。op.ChannelDetailGet 自身不加锁, 由调用方(handler)持有。
+func GroupGateRLock()   { groupGate.RLock() }
+func GroupGateRUnlock() { groupGate.RUnlock() }
+
 // RouteState 是一个分组的进程内路由状态; 跨该分组的全部请求共享。
 // 同时作为路由流的消息形状与分组读取响应中的 runtime 字段: 冷却, 探测与亲和都是本包路由算法的概念,
 // 故状态形状由本包定义, 分组的持久化配置不含它; 内部标志未导出, 不会随消息出到 JSON。

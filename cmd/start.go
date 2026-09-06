@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/bestruirui/octopus/internal/channelsync"
 	"github.com/bestruirui/octopus/internal/conf"
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/op"
@@ -65,11 +67,26 @@ var startCmd = &cobra.Command{
 			return err
 		})
 
+		// channelsync 停机: 在 server.Close 之后、DrainScores 之前注册(LIFO 执行顺序 = server.Close → channelsync.Stop → DrainScores)。
+		// 停止接受新同步并等待在途 worker 结束; 超时中止后续回调, 防止在途写回灌入已关闭的库。
+		shutdown.Register(func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := channelsync.Stop(ctx); err != nil {
+				log.Warnf("channelsync stop timeout: %v", err)
+				return fmt.Errorf("%w: %w", shutdown.ErrAbortCallbacks, err)
+			}
+			return nil
+		})
+
 		if err := server.Start(); err != nil {
 			log.Errorf("server start error: %v", err)
 			return
 		}
 		shutdown.Register(server.Close)
+
+		// channelsync 初始化根 context, 供所有同步 goroutine 继承取消信号。
+		channelsync.Init(context.Background())
 
 		task.Init()
 		go task.RUN()

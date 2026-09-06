@@ -8,6 +8,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/google/uuid"
 )
 
 // seedGroupForEnabled 建一个双成员评分分组并刷新缓存, 返回分组与两成员 ID。
@@ -22,7 +23,7 @@ func seedGroupForEnabled(t *testing.T) (model.Group, int, int) {
 	var channels []model.Channel
 	var grants []int
 	for i := 0; i < 2; i++ {
-		ch := model.Channel{ChannelConfig: model.ChannelConfig{
+		ch := model.Channel{Revision: uuid.NewString(), ChannelConfig: model.ChannelConfig{
 			Name: "enabled-ch-" + string(rune('a'+i)), Enabled: true, BaseURL: "http://example",
 		}}
 		dbConn.Create(&ch)

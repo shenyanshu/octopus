@@ -7,6 +7,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -85,6 +86,9 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 			return nil, fmt.Errorf("import channel %d: %w", dump.Channels[i].ID, err)
 		}
 		dump.Channels[i].ChannelConfig = config
+		// 为新插入的渠道分配新版本令牌: createDoNothing 对已存在渠道跳过插入,
+		// 故此令牌只写入新渠道; 已存在渠道的 revision 在事务内按可编辑状态比较决定是否轮转。
+		dump.Channels[i].Revision = uuid.NewString()
 	}
 
 	// 自动补充规则与接口同口径校验: 落库的 pattern 恒为可编译, 后续运行期补齐无需再防非法输入。
@@ -98,6 +102,21 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 	conn := db.GetDB().WithContext(ctx)
 	res := &model.DBImportResult{RowsAffected: map[string]int64{}}
 	err := conn.Transaction(func(tx *gorm.DB) error {
+		// 导入前已存在的渠道: 记录可编辑状态快照, 导入后比较, 变化的轮转 revision。
+		// 新插入的渠道已有新 UUID, 不参与比较; 纯统计导入不改变可编辑状态, 不轮转。
+		var existingIDs []int
+		if err := tx.Model(&model.Channel{}).Pluck("id", &existingIDs).Error; err != nil {
+			return fmt.Errorf("import: failed to read existing channels: %w", err)
+		}
+		beforeStates := make(map[int]channelCanonicalState, len(existingIDs))
+		for _, id := range existingIDs {
+			state, err := snapshotChannelCanonical(tx, id)
+			if err != nil {
+				return fmt.Errorf("import: failed to snapshot channel %d before: %w", id, err)
+			}
+			beforeStates[id] = state
+		}
+
 		// base tables
 		if n, err := createDoNothing(tx, dump.Channels); err != nil {
 			return fmt.Errorf("import channels: %w", err)
@@ -205,6 +224,11 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 			return fmt.Errorf("import stats_api_key: %w", err)
 		} else {
 			res.RowsAffected["stats_api_key"] = n
+		}
+
+		// 导入后比较已存在渠道的可编辑状态: 变化的轮转 revision, 未变的不动。
+		if err := rotateImportedChannelRevisions(tx, existingIDs, beforeStates); err != nil {
+			return err
 		}
 
 		return nil

@@ -10,6 +10,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/utils/cache"
 	"github.com/charmbracelet/log"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -24,12 +25,34 @@ var (
 const definedProtocols = model.ProtocolOpenAIChatCompletion | model.ProtocolOpenAIResponse | model.ProtocolAnthropicMessage
 
 // ChannelDetailGet 返回指定渠道的完整配置, 供编辑表单读取。
-func ChannelDetailGet(id int) (model.ChannelDetail, error) {
-	channel, ok := channelCache.Get(id)
-	if !ok {
-		return model.ChannelDetail{}, fmt.Errorf("channel not found")
+// 直接从 DB 组装: revision 与子表状态来自同一提交快照, 不混用可能 stale 的 channelCache。
+// 自身不加 groupGate 读锁: op 不依赖 relay, 调用方(handler)在持有读/写锁期间调用以保证一致性。
+// 缺失渠道返回 gorm.ErrRecordNotFound, handler 据此返回 404。
+func ChannelDetailGet(ctx context.Context, id int) (model.ChannelDetail, error) {
+	conn := db.GetDB().WithContext(ctx)
+	var channel model.Channel
+	if err := conn.Where("id = ?", id).First(&channel).Error; err != nil {
+		return model.ChannelDetail{}, err
 	}
-	return channelDetail(channel), nil
+	var keys []model.ChannelKey
+	if err := conn.Where("channel_id = ?", id).Find(&keys).Error; err != nil {
+		return model.ChannelDetail{}, fmt.Errorf("failed to load channel keys: %w", err)
+	}
+	var models []model.ChannelModel
+	if err := conn.Where("channel_id = ?", id).Find(&models).Error; err != nil {
+		return model.ChannelDetail{}, fmt.Errorf("failed to load channel models: %w", err)
+	}
+	modelIDs := make([]int, 0, len(models))
+	for _, m := range models {
+		modelIDs = append(modelIDs, m.ID)
+	}
+	var grants []model.ChannelGrant
+	if len(modelIDs) > 0 {
+		if err := conn.Where("channel_model_id IN ?", modelIDs).Find(&grants).Error; err != nil {
+			return model.ChannelDetail{}, fmt.Errorf("failed to load channel grants: %w", err)
+		}
+	}
+	return channelDetailFromRows(channel, keys, models, grants), nil
 }
 
 // ChannelStatsList 返回全部渠道及其模型的累计统计, 自带名称与启停状态, 同时充当列表页的渠道列表。
@@ -216,11 +239,21 @@ func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 		return nil, nil, err
 	}
 
-	channel := model.Channel{ChannelConfig: detail.ChannelConfig}
+	channel := model.Channel{ChannelConfig: detail.ChannelConfig, Revision: uuid.NewString()}
 	var mutation *ChannelMutation
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&channel).Error; err != nil {
 			return fmt.Errorf("failed to create channel: %w", err)
+		}
+		// GORM 对 gorm:"default:true" 的 bool 字段在 Create 时把零值 false 覆盖为 true:
+		// 显式禁用的渠道会被强制启用, StartBatch 误纳入。Create 后在同一事务内按提交值回写,
+		// map 形式不触发默认值覆盖, 保证 explicit false 落库。
+		if !detail.Enabled {
+			if err := tx.Model(&model.Channel{}).Where("id = ?", channel.ID).
+				Update("enabled", false).Error; err != nil {
+				return fmt.Errorf("failed to set channel enabled=false: %w", err)
+			}
+			channel.Enabled = false
 		}
 		if err := syncChannelChildren(tx, channel.ID, detail); err != nil {
 			return err
@@ -253,7 +286,15 @@ func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 			}
 		}
 	}
-	created := channelDetail(channel)
+	// 返回的 detail 从 DB 组装: revision 与子表来自同一提交快照, 不混缓存。
+	created, err := ChannelDetailGet(ctx, channel.ID)
+	if err != nil {
+		// 事务已提交, 读取失败不丢失提交事实: 返回 PostCommitError 携带 mutation。
+		return nil, mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to read created channel detail: %w", err),
+			Mutation:   mutation,
+		}
+	}
 	return &created, mutation, nil
 }
 
@@ -263,34 +304,44 @@ func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 // 提交前失败返回 nil 事实(未产生任何库变更); 提交成功但缓存刷新失败返回 *PostCommitError,
 // 其 Mutation 携带级联删除的分组影响, 调用方必须据此校正路由后再报错。
 func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.ChannelDetail, *ChannelMutation, error) {
+	// 全量更新必须携带 expected revision: 空串或缺失不允许绕过乐观锁, 直接 400。
+	if detail.Revision == "" {
+		return nil, nil, ErrRevisionRequired
+	}
 	if _, ok := channelCache.Get(detail.ID); !ok {
-		return nil, nil, fmt.Errorf("channel not found")
+		return nil, nil, ErrRevisionConflict
 	}
 	if err := normalizeChannelDetail(detail); err != nil {
 		return nil, nil, err
 	}
 
+	// 服务端生成新 revision, 写入 channels 行。expected 与库内不匹配时 RowsAffected=0。
+	newRevision := uuid.NewString()
 	var mutation *ChannelMutation
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 级联影响必须在删除发生前快照: 提交后唯一可信的校正依据。
 		before, err := channelGroupMembersSnapshot(tx, detail.ID)
 		if err != nil {
 			return err
 		}
-		// 逐列点名而不整行覆盖: 全量提交下 enabled 置假与被清空的可选字段都必须落库, 按零值跳过会写不进去;
-		// 而统计列由转发累加, 不在提交范围内, 整行覆盖会把它抹回提交时的旧值。
-		if err := tx.Model(&model.Channel{}).Where("id = ?", detail.ID).
+		// CAS 更新: WHERE id AND revision = expected。逐列点名而不整行覆盖:
+		// 全量提交下 enabled 置假与被清空的可选字段都必须落库, 按零值跳过会写不进去;
+		// 统计列由转发累加, 不在提交范围内, 整行覆盖会把它抹回提交时的旧值。
+		result := tx.Model(&model.Channel{}).
+			Where("id = ? AND revision = ?", detail.ID, detail.Revision).
 			Select("name", "dialect", "enabled", "base_url",
 				"openai_chat_completion_path", "openai_response_path", "anthropic_message_path",
-				"proxy", "channel_proxy", "custom_header", "param_override", "match_regex").
-			Updates(&model.Channel{ChannelConfig: detail.ChannelConfig}).Error; err != nil {
-			return fmt.Errorf("failed to update channel: %w", err)
+				"proxy", "channel_proxy", "custom_header", "param_override", "match_regex", "auto_sync_models", "revision").
+			Updates(&model.Channel{ChannelConfig: detail.ChannelConfig, Revision: newRevision})
+		if result.Error != nil {
+			return fmt.Errorf("failed to update channel: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			// expected revision 不匹配: 渠道被并发编辑、删除后重建或导入覆盖。
+			return ErrRevisionConflict
 		}
 		if err := syncChannelChildren(tx, detail.ID, detail); err != nil {
 			return err
 		}
-		// 模型/凭据/授权与启用状态已在本事务内定稿: 规则分组的补齐经 tx 看到的即是这些最新状态;
-		// 渠道被本轮禁用时 enabled 过滤天然无匹配, 禁用路径无新增。
 		if err := supplementGroupsForChannel(tx, detail.ID); err != nil {
 			return err
 		}
@@ -304,9 +355,8 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 		return nil, nil, err
 	}
 
-	// 缓存条目由提交的配置重建, 统计从原条目搬过来: 它含本轮尚未落库的累加, 比库内的行更新。
 	channelStatsNeedUpdateLock.Lock()
-	channel := model.Channel{ID: detail.ID, ChannelConfig: detail.ChannelConfig}
+	channel := model.Channel{ID: detail.ID, ChannelConfig: detail.ChannelConfig, Revision: newRevision}
 	if cached, ok := channelCache.Get(detail.ID); ok {
 		channel.StatsMetrics = cached.StatsMetrics
 	}
@@ -324,7 +374,17 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 			Mutation:   mutation,
 		}
 	}
-	updated := channelDetail(channel)
+	// detail 的 revision 替换为新令牌, 返回给前端用于下一次更新的 expected。
+	detail.Revision = newRevision
+	// 返回的 detail 从 DB 组装: revision 与子表来自同一提交快照, 不混缓存。
+	updated, err := ChannelDetailGet(ctx, detail.ID)
+	if err != nil {
+		// 事务已提交, 读取失败不丢失提交事实: 返回 PostCommitError 携带 mutation。
+		return nil, mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to read updated channel detail: %w", err),
+			Mutation:   mutation,
+		}
+	}
 	return &updated, mutation, nil
 }
 
@@ -408,20 +468,33 @@ func syncChannelChildren(tx *gorm.DB, channelID int, detail *model.ChannelDetail
 
 // ChannelEnabled 更新渠道启用状态, 并在启用路径补齐规则分组新增成员。
 // 启用使本渠道授权重新可选: 规则分组在原事务内补入此刻匹配的授权; 禁用无新增。
+// 仅在实际启停状态变化时轮转 revision: 无操作(no-op, 相同值)保持令牌不变。
 // 提交事实语义与 ChannelUpdate 一致: 提交后刷新失败返回 *PostCommitError 携带提交事实。
 func ChannelEnabled(id int, enabled bool, ctx context.Context) (*ChannelMutation, error) {
 	channel, ok := channelCache.Get(id)
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
 	}
+	// 仅在实际状态变化时轮转; no-op 保持令牌, 不让进行中的全量更新无谓失败。
+	rotate := channel.Enabled != enabled
 	var mutation *ChannelMutation
+	var newRevision string
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		before, err := channelGroupMembersSnapshot(tx, id)
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(&model.Channel{}).Where("id = ?", id).Update("enabled", enabled).Error; err != nil {
-			return fmt.Errorf("failed to update channel enabled: %w", err)
+		if rotate {
+			newRevision = uuid.NewString()
+			if err := tx.Model(&model.Channel{}).Where("id = ?", id).
+				Updates(map[string]any{"enabled": enabled, "revision": newRevision}).Error; err != nil {
+				return fmt.Errorf("failed to update channel enabled: %w", err)
+			}
+		} else {
+			if err := tx.Model(&model.Channel{}).Where("id = ?", id).
+				Update("enabled", enabled).Error; err != nil {
+				return fmt.Errorf("failed to update channel enabled: %w", err)
+			}
 		}
 		// 补齐经 tx: 复核必须看到本轮更新后的 enabled, 缓存仍是旧值会漏掉刚启用的渠道。
 		if err := supplementGroupsForChannel(tx, id); err != nil {
@@ -437,7 +510,11 @@ func ChannelEnabled(id int, enabled bool, ctx context.Context) (*ChannelMutation
 		return nil, err
 	}
 
+	// 发布实际当前 revision: 轮转了用新令牌, 没轮转保持原值。
 	channel.Enabled = enabled
+	if rotate {
+		channel.Revision = newRevision
+	}
 	channelCache.Set(id, channel)
 	if mutation != nil {
 		if err := refreshGroupsAfterCommit(ctx); err != nil {
@@ -625,7 +702,8 @@ func channelRefreshCache(ctx context.Context) error {
 
 // reloadChannelChildren 重新加载单个渠道的凭据, 模型与渠道授权缓存。
 // 存活目标保留缓存中尚未落库的统计, 避免刷新丢失本轮累加。
-func reloadChannelChildren(ctx context.Context, channelID int) error {
+// 声明为包内变量仅为测试注入提交后子缓存刷新失败, 不改变生产行为。
+var reloadChannelChildren = func(ctx context.Context, channelID int) error {
 	conn := db.GetDB().WithContext(ctx)
 	channelKeys := []model.ChannelKey{}
 	if err := conn.Where("channel_id = ?", channelID).Find(&channelKeys).Error; err != nil {
@@ -690,53 +768,48 @@ func reloadChannelChildren(ctx context.Context, channelID int) error {
 	return nil
 }
 
-// channelDetail 把渠道缓存与其凭据, 模型和授权合并为编辑表单所需的完整配置。
-// 授权按名称给出而不给主键: 名称在渠道内唯一, 提交时也按名称引用, 读写同一种寻址界面才无需翻译。
-// 三个集合字段恒为数组, 空集合也给出, 免得各消费方各自兜底 null; Header 由写入侧保证已是数组。
-// 三者均按名称定序: 缓存遍历顺序随机, 而编辑表单不提供排序开关, 顺序须由此处定稿。
-func channelDetail(channel model.Channel) model.ChannelDetail {
-	detail := model.ChannelDetail{ID: channel.ID, ChannelConfig: channel.ChannelConfig}
+// channelDetailFromRows 从同一提交快照的 DB 行组装 ChannelDetail。
+// 不含主键与统计: 编辑表单只需名称与配置, 主键与统计分别由 DB 分配与转发累加。
+// 集合字段恒为非空数组: 读取侧承诺不为 null。
+func channelDetailFromRows(channel model.Channel, keys []model.ChannelKey, models []model.ChannelModel, grants []model.ChannelGrant) model.ChannelDetail {
+	detail := model.ChannelDetail{ID: channel.ID, Revision: channel.Revision, ChannelConfig: channel.ChannelConfig}
 
-	detail.Keys = make([]model.ChannelKeyConfig, 0)
-	keyNameByID := make(map[int]string)
-	for _, channelKey := range channelKeyCache.GetAll() {
-		if channelKey.ChannelID == channel.ID {
-			detail.Keys = append(detail.Keys, channelKey.ChannelKeyConfig)
-			keyNameByID[channelKey.ID] = channelKey.Name
-		}
+	detail.Keys = make([]model.ChannelKeyConfig, 0, len(keys))
+	keyNameByID := make(map[int]string, len(keys))
+	for _, k := range keys {
+		detail.Keys = append(detail.Keys, k.ChannelKeyConfig)
+		keyNameByID[k.ID] = k.Name
 	}
 	sort.Slice(detail.Keys, func(i, j int) bool { return detail.Keys[i].Name < detail.Keys[j].Name })
 
-	detail.Models = make([]string, 0)
-	modelNameByID := make(map[int]string)
-	for _, channelModel := range channelModelCache.GetAll() {
-		if channelModel.ChannelID == channel.ID {
-			detail.Models = append(detail.Models, channelModel.Name)
-			modelNameByID[channelModel.ID] = channelModel.Name
-		}
+	detail.Models = make([]string, 0, len(models))
+	modelNameByID := make(map[int]string, len(models))
+	for _, m := range models {
+		detail.Models = append(detail.Models, m.Name)
+		modelNameByID[m.ID] = m.Name
 	}
 	sort.Strings(detail.Models)
 
 	// 授权按模型主键归属本渠道, 两侧主键在此翻译成名称。
-	grants := make([]model.ChannelGrantConfig, 0)
-	for _, grant := range channelGrantCache.GetAll() {
-		modelName, ok := modelNameByID[grant.ChannelModelID]
+	grantsOut := make([]model.ChannelGrantConfig, 0, len(grants))
+	for _, g := range grants {
+		modelName, ok := modelNameByID[g.ChannelModelID]
 		if !ok {
 			continue
 		}
-		keyName, ok := keyNameByID[grant.ChannelKeyID]
+		keyName, ok := keyNameByID[g.ChannelKeyID]
 		if !ok {
 			continue
 		}
-		grants = append(grants, model.ChannelGrantConfig{ModelName: modelName, KeyName: keyName, Protocols: grant.Protocols})
+		grantsOut = append(grantsOut, model.ChannelGrantConfig{ModelName: modelName, KeyName: keyName, Protocols: g.Protocols})
 	}
-	sort.Slice(grants, func(i, j int) bool {
-		if grants[i].ModelName != grants[j].ModelName {
-			return grants[i].ModelName < grants[j].ModelName
+	sort.Slice(grantsOut, func(i, j int) bool {
+		if grantsOut[i].ModelName != grantsOut[j].ModelName {
+			return grantsOut[i].ModelName < grantsOut[j].ModelName
 		}
-		return grants[i].KeyName < grants[j].KeyName
+		return grantsOut[i].KeyName < grantsOut[j].KeyName
 	})
-	detail.Grants = grants
+	detail.Grants = grantsOut
 	return detail
 }
 
@@ -776,6 +849,15 @@ func syncChannelKeys(tx *gorm.DB, channelID int, requested []model.ChannelKeyCon
 		newKey := model.ChannelKey{ChannelID: channelID, ChannelKeyConfig: requestedKey}
 		if err := tx.Create(&newKey).Error; err != nil {
 			return fmt.Errorf("failed to create channel key: %w", err)
+		}
+		// 与 ChannelCreate 同理: gorm:"default:true" 在 Create 时把 false 覆盖为 true。
+		// 同一事务内按提交值回写, 保证 explicit false 落库。
+		if !requestedKey.Enabled {
+			if err := tx.Model(&model.ChannelKey{}).Where("id = ?", newKey.ID).
+				Update("enabled", false).Error; err != nil {
+				return fmt.Errorf("failed to set channel key enabled=false: %w", err)
+			}
+			newKey.Enabled = false
 		}
 	}
 	deletedKeyIDs := make([]int, 0, len(existingByName))

@@ -38,11 +38,13 @@ type ChannelConfig struct {
 	CustomHeader             []CustomHeader `json:"custom_header" gorm:"serializer:json"`                                                               // 追加到上游请求的 Header。
 	ParamOverride            string         `json:"param_override"`                                                                                     // 请求参数覆盖配置; 留空表示不覆盖。
 	MatchRegex               string         `json:"match_regex"`                                                                                        // 拉取模型列表时的过滤表达式; 留空表示不过滤。
+	AutoSyncModels           bool           `json:"auto_sync_models" gorm:"not null;default:false"`                                                     // 是否自动同步上游模型; 默认关闭, 启用后按全局周期拉取并补齐缺失的模型与授权。
 }
 
 // 单个上游渠道的共享配置; 路径按协议分别配置, 凭据由 ChannelKey 提供。
 type Channel struct {
-	ID            int            `json:"id" gorm:"primaryKey"`                                      // 渠道主键。
+	ID            int            `json:"id" gorm:"primaryKey"`                 // 渠道主键。
+	Revision      string         `json:"-" gorm:"size:36;not null;default:''"` // 乐观锁版本令牌, 每次写操作服务端生成新 UUID; 不出 JSON, 经 ChannelDetail.Revision 暴露。
 	ChannelConfig                // 可编辑配置, 平铺为 channels 的各列。
 	Keys          []ChannelKey   `json:"-" gorm:"foreignKey:ChannelID;constraint:OnDelete:CASCADE"` // 渠道下的上游凭据; 不出 JSON, 读取走 ChannelDetail。
 	Models        []ChannelModel `json:"-" gorm:"foreignKey:ChannelID;constraint:OnDelete:CASCADE"` // 渠道提供的模型; 不出 JSON, 读取走 ChannelDetail。
@@ -89,7 +91,8 @@ type ChannelGrant struct {
 // 凭据与模型只给界面用得上的字段: 两者在渠道内按名称唯一, 提交时也按名称引用, 主键与统计都无从使用。
 // 集合字段恒为数组, 读取侧承诺不为 null。
 type ChannelDetail struct {
-	ID            int                  `json:"id"`     // 渠道主键; 创建时提交 0, 由数据库分配。
+	ID            int                  `json:"id"`       // 渠道主键; 创建时提交 0, 由数据库分配。
+	Revision      string               `json:"revision"` // 乐观锁版本令牌; 创建时忽略提交值由服务端生成, 更新时必须携带当前令牌, 过期返回 409。
 	ChannelConfig                      // 渠道自身的可编辑配置。
 	Keys          []ChannelKeyConfig   `json:"keys"`   // 渠道下的上游凭据。
 	Models        []string             `json:"models"` // 渠道提供的上游模型名称。
@@ -156,4 +159,23 @@ type ChannelFetchModelRequest struct {
 type ChannelFetchModel struct {
 	Name      string   `json:"name"`      // 上游模型名称。
 	Protocols Protocol `json:"protocols"` // 由探测结果得出的协议位掩码。
+}
+
+// ChannelModelSyncStatus 是单个渠道最近一次模型同步的进程内结果。
+// 重启后重置为空, 不保留历史记录; UI 轮询 /sync-status 读取此结构判断是否在运行及上次结果。
+// LastSyncAt 用 *string: 未同步过(running 或从未完成)为 nil, JSON 序列化为 null 而非 ""。
+type ChannelModelSyncStatus struct {
+	ChannelID   int     `json:"channel_id"`   // 渠道主键。
+	Status      string  `json:"status"`       // idle|running|success|partial|failed|skipped。
+	LastSyncAt  *string `json:"last_sync_at"` // 最近一次同步完成的 RFC3339Nano UTC 时间, 未同步过为 nil。
+	AddedModels int     `json:"added_models"` // 本次新增的模型数量。
+	AddedGrants int     `json:"added_grants"` // 本次新增的授权数量。
+	Error       string  `json:"error"`        // 失败或部分失败时的安全摘要, 不含 token 或上游原文。
+}
+
+// ChannelSyncStartResult 是单次或批量同步触发的立即返回, 不等待后台执行完成。
+type ChannelSyncStartResult struct {
+	StartedIDs []int `json:"started_ids"` // 已接受并开始(或排队)同步的渠道 ID。
+	BusyIDs    []int `json:"busy_ids"`    // 正在同步中, 本次跳过的渠道 ID。
+	SkippedIDs []int `json:"skipped_ids"` // 因不满足前置条件(禁用/无可用凭据/auto_sync 关闭)跳过的渠道 ID。
 }

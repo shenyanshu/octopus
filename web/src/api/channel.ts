@@ -4,7 +4,14 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { apiRequest } from "./client";
+import {
+  detectCompletedSyncs,
+  hasRunningSync,
+  SYNC_STATUS_IDLE_POLL_MS,
+  SYNC_STATUS_RUNNING_POLL_MS,
+} from "./channel-sync";
 import {
   channelStatsQueryOptions,
   groupListQueryOptions,
@@ -71,9 +78,15 @@ export type ChannelGrantCandidate = {
  */
 export type ChannelDetail = {
   id: number;
+  // revision 是后端为整份配置生成的不透明版本令牌: detail/create/update 响应都会返回当前值,
+  // 更新请求必须携带打开草稿时拿到的 revision; 缺失 400, 已轮换(后台同步/其他编辑/导入) 409。
+  // 它只做并发保护, 不参与探测与展示。
+  revision: string;
   name: string;
   dialect: Dialect;
   enabled: boolean;
+  // auto_sync_models 开启后由后台按系统周期逐凭据补充模型与授权, 只增不删; 存量渠道默认关闭。
+  auto_sync_models: boolean;
   base_url: string; // 上游地址，各协议共用。
   openai_chat_completion_path: string;
   openai_response_path: string;
@@ -125,10 +138,14 @@ export type ChannelStatsFormatted = {
 // FetchModelRequest 按指定凭据试拉上游模型列表。
 // 渠道尚未保存时也可试拉，故随请求携带整份渠道配置：探测用的地址、协议路径、代理、Header 与过滤表达式
 // 必须和保存后生效的完全一致，直接给编辑态即可，探测用不上的字段后端忽略。
+// revision 只做并发保护, 与探测无关, 不属于探测载荷。
 // 名称可为空：探测常发生在渠道尚未命名时，后端只要求地址非空。
 // 不带协议：后端一次同时探 OpenAI 与 Anthropic 两侧，协议支持由各侧响应决定。
 type FetchModelRequest = {
-  channel: Omit<ChannelDetail, "id" | "keys" | "models" | "grants">;
+  channel: Omit<
+    ChannelDetail,
+    "id" | "keys" | "models" | "grants" | "revision"
+  >;
   key: string;
 };
 
@@ -198,6 +215,15 @@ export function useChannelStats(enabled = true) {
   return useQuery({ ...channelStatsFormattedQueryOptions, enabled });
 }
 
+// channelDetailQueryOptions 统一渠道完整配置的查询定义, 供编辑表单打开时订阅与
+// 冲突后强制重取(queryClient.fetchQuery)共用; 重取必须走同一 queryKey 才能拿到真实新数据。
+export const channelDetailQueryOptions = (id: number) =>
+  queryOptions({
+    queryKey: ["channels", "detail", id],
+    queryFn: () => apiRequest<ChannelDetail>(`/api/v1/channel/detail/${id}`),
+    refetchOnMount: "always",
+  });
+
 /**
  * 获取单个渠道完整配置 Hook, 供编辑表单打开时读取; id 为空时不发请求。
  * 不随统计一并取回: 整份配置带着路径、代理与凭据明文, 只有正在编辑的那一个渠道用得上。
@@ -207,10 +233,8 @@ export function useChannelStats(enabled = true) {
  */
 export function useChannelDetail(id?: number) {
   return useQuery({
-    queryKey: ["channels", "detail", id],
-    queryFn: () => apiRequest<ChannelDetail>(`/api/v1/channel/detail/${id}`),
+    ...channelDetailQueryOptions(id ?? 0),
     enabled: id !== undefined,
-    refetchOnMount: "always",
   });
 }
 
@@ -354,6 +378,136 @@ export function useFetchModel() {
       apiRequest<FetchModel[]>("/api/v1/channel/fetch-model", {
         method: "POST",
         body: data,
+      }),
+  });
+}
+
+// ChannelModelSyncStatus 是单个渠道最近一次模型同步的结果快照, 由后端内存维护:
+// 重启后无记录, 列表中不存在的渠道一律视为 idle。last_sync_at 为 RFC3339 UTC 时间, 未同步过为 null。
+// error 已由后端保证可安全展示, 前端不做二次加工。
+export type ChannelModelSyncStatus = {
+  channel_id: number;
+  status: "idle" | "running" | "success" | "partial" | "failed" | "skipped";
+  last_sync_at: string | null;
+  added_models: number;
+  added_grants: number;
+  error: string;
+};
+
+// ChannelSyncStartResult 是同步启动接口的即时回执: 200 仅表示请求被受理, 不代表同步完成,
+// 完成结果由 sync-status 查询随后给出。三个集合互斥。
+export type ChannelSyncStartResult = {
+  started_ids: number[];
+  busy_ids: number[];
+  skipped_ids: number[];
+};
+
+// channelSyncStatusQueryOptions 统一模型同步状态查询定义, 供状态订阅与失效共用。
+export const channelSyncStatusQueryOptions = queryOptions({
+  queryKey: ["channels", "sync-status"],
+  queryFn: () =>
+    apiRequest<ChannelModelSyncStatus[]>("/api/v1/channel/sync-status"),
+});
+
+// useChannelSyncStatus 订阅全部渠道最近一次同步的状态。
+// 仅在订阅方(渠道页)展示期间轮询: 空闲每 30s 低频刷新, 存在运行中的同步时降到 2s, 结束后自动回到低频。
+export function useChannelSyncStatus(enabled = true) {
+  return useQuery({
+    ...channelSyncStatusQueryOptions,
+    enabled,
+    refetchOnMount: "always",
+    refetchInterval: (query) =>
+      hasRunningSync(query.state.data)
+        ? SYNC_STATUS_RUNNING_POLL_MS
+        : SYNC_STATUS_IDLE_POLL_MS,
+  });
+}
+
+// useChannelSyncCompletionInvalidation 在同步由 running 落入终态时失效相关查询,
+// 让新增的模型与授权立刻出现在各页面。
+// detail 只标记过期不主动重取(refetchType: "none"): 编辑表单可能正开着, 草稿在挂载时已定稿,
+// 重取既无意义也容易造成困惑; 下次打开时 refetchOnMount 会取回最新配置。
+export function useChannelSyncCompletionInvalidation(
+  statuses: ChannelModelSyncStatus[] | undefined,
+) {
+  const queryClient = useQueryClient();
+  const previousStatuses = useRef<ChannelModelSyncStatus[] | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    const completedChannelIds = detectCompletedSyncs(
+      previousStatuses.current,
+      statuses,
+    );
+    previousStatuses.current = statuses;
+    if (completedChannelIds.length === 0) return;
+    for (const id of completedChannelIds) {
+      queryClient.invalidateQueries({
+        queryKey: ["channels", "detail", id],
+        refetchType: "none",
+      });
+    }
+    queryClient.invalidateQueries({
+      queryKey: channelStatsQueryOptions.queryKey,
+    });
+    queryClient.invalidateQueries({
+      queryKey: channelGrantListQueryOptions.queryKey,
+    });
+    queryClient.invalidateQueries({ queryKey: groupListQueryOptions.queryKey });
+    // 同步只增不删地补充了模型, 全局模型列表(模型页与表单可选集)也要跟着出现新项。
+    queryClient.invalidateQueries({ queryKey: modelListQueryOptions.queryKey });
+  }, [statuses, queryClient]);
+}
+
+/**
+ * 请求后台同步单个渠道的模型 Hook；200 只代表受理，完成结果看 sync-status。
+ * 后端要求渠道已启用且存在启用的凭据，否则跳过；渠道不存在返回 404。
+ *
+ * @example
+ * const syncModels = useSyncChannelModels();
+ * syncModels.mutate(1);
+ */
+export function useSyncChannelModels() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (channelId: number) =>
+      apiRequest<ChannelSyncStartResult>(
+        `/api/v1/channel/sync-models/${channelId}`,
+        {
+          method: "POST",
+          body: {},
+        },
+      ),
+    // 受理后立即刷新状态查询, 让 running 尽快出现在状态条上。
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: channelSyncStatusQueryOptions.queryKey,
+      }),
+  });
+}
+
+/**
+ * 请求后台同步所有"已启用且开启自动同步"的渠道 Hook；200 只代表受理，完成结果看 sync-status。
+ * 正在同步的渠道由后端去重(busy_ids)，不符合条件的渠道跳过(skipped_ids)。
+ *
+ * @example
+ * const syncAll = useSyncAllChannelModels();
+ * syncAll.mutate();
+ */
+export function useSyncAllChannelModels() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      apiRequest<ChannelSyncStartResult>("/api/v1/channel/sync-models-all", {
+        method: "POST",
+        body: {},
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: channelSyncStatusQueryOptions.queryKey,
       }),
   });
 }

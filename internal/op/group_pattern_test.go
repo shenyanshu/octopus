@@ -10,6 +10,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/google/uuid"
 )
 
 // 本文件证明自动补充规则的事务内取数、补齐、提交事实与原子性。
@@ -26,7 +27,7 @@ type keySpec struct {
 func seedChannel(t *testing.T, name string, enabled bool, models []string, keys []keySpec) (int, map[string]int) {
 	t.Helper()
 	dbConn := db.GetDB()
-	channel := model.Channel{ChannelConfig: model.ChannelConfig{
+	channel := model.Channel{Revision: uuid.NewString(), ChannelConfig: model.ChannelConfig{
 		Name: name, Enabled: true, BaseURL: "http://" + name + ".example",
 		OpenAIChatCompletionPath: "/chat", AnthropicMessagePath: "/msg",
 	}}
@@ -562,7 +563,7 @@ func TestChannelUpdateAddModelAutoSupplements(t *testing.T) {
 	if !ok {
 		t.Fatalf("渠道缓存缺失")
 	}
-	detail := channelDetail(channel)
+	detail := channelDetailFromDBForTest(t, channel)
 	detail.Models = append(detail.Models, "claude-gpt")
 	detail.Grants = append(detail.Grants, model.ChannelGrantConfig{ModelName: "claude-gpt", KeyName: detail.Keys[0].Name, Protocols: model.ProtocolOpenAIChatCompletion})
 	// 把规则放宽到 "gpt" 以匹配 claude-gpt: 但放宽规则要 GroupUpdate, 不在 ChannelUpdate 内。
@@ -583,7 +584,12 @@ func TestChannelUpdateAddModelAutoSupplements(t *testing.T) {
 	}
 	reloadAllCache(t)
 	// 再次更新渠道(同配置)以触发 supplementGroupsForChannel。
-	detail2 := channelDetail(channel)
+	// ChannelUpdate 轮转 revision, 必须重新读缓存获取最新令牌, 否则 CAS 失败。
+	channel2, ok := channelCache.Get(getChannelIDByGrant(t, group.Items[0].ChannelGrantID))
+	if !ok {
+		t.Fatalf("渠道缓存缺失")
+	}
+	detail2 := channelDetailFromDBForTest(t, channel2)
 	if _, _, err := ChannelUpdate(&detail2, context.Background()); err != nil {
 		t.Fatalf("二次更新渠道失败: %v", err)
 	}
@@ -777,7 +783,7 @@ func TestChannelUpdateMutationCarriesAddedAndRemoved(t *testing.T) {
 	if !ok {
 		t.Fatalf("渠道缓存缺失")
 	}
-	detail := channelDetail(channel)
+	detail := channelDetailFromDBForTest(t, channel)
 	// 删掉 gpt-4o-mini 的模型与授权 → 级联删成员。
 	keptModels := []string{"gpt-4o"}
 	keptGrants := []model.ChannelGrantConfig{}

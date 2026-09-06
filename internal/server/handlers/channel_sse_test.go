@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/bestruirui/octopus/internal/db"
+	"github.com/bestruirui/octopus/internal/groupevents"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/relay"
@@ -26,28 +27,18 @@ import (
 // processChannelMutation 定义在 channel.go(生产), 测试经真实 handler 与直接调用两种方式验证它。
 // 测试不重定义该函数: 避免与生产编排分叉。
 
-// subscribeGroupEvents 订阅 groupEventStreams 一条事件流, 返回通道与清理函数。
-// 复用现有 SSE 设施: 与 streamGroupEvents 同一 map, 只是不走 HTTP 长连接。
-func subscribeGroupEvents(t *testing.T) (chan groupEvent, func()) {
+// subscribeGroupEvents 订阅 groupevents 共享总线一条事件流, 返回通道与清理函数。
+// 复用现有 SSE 设施: 与 streamGroupEvents 同一订阅入口, 只是不走 HTTP 长连接。
+func subscribeGroupEvents(t *testing.T) (chan groupevents.Event, func()) {
 	t.Helper()
-	events := make(chan groupEvent, groupEventBuffer)
-	groupEventMu.Lock()
-	groupEventStreams[events] = struct{}{}
-	groupEventMu.Unlock()
+	events := groupevents.Subscribe()
 	return events, func() {
-		groupEventMu.Lock()
-		if _, exists := groupEventStreams[events]; exists {
-			delete(groupEventStreams, events)
-			close(events)
-		}
-		groupEventMu.Unlock()
+		groupevents.Unsubscribe(events)
 	}
 }
 
 // receiveGroupEvent 等待一条事件, 最多让出调度若干次后超时返回 "", false。
-// 发布在 publishGroupEvent 内同步完成且通道带缓冲, 但 handler 编排与订阅测试可能跨 goroutine,
-// 故给足调度机会。
-func receiveGroupEvent(events <-chan groupEvent) (string, bool) {
+func receiveGroupEvent(events <-chan groupevents.Event) (string, bool) {
 	for i := 0; i < 8; i++ {
 		yieldOnce()
 		select {
