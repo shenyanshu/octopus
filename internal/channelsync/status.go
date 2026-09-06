@@ -35,15 +35,17 @@ func setStatusRunning(channelID int) {
 }
 
 // setStatusDone 设置已完成状态(非 running), last_sync_at 用 RFC3339Nano 以区分两次快速 sync。
-func setStatusDone(channelID int, status string, additions op.SyncAdditions, errMsg string) {
+func setStatusDone(channelID int, status string, changes op.SyncChanges, errMsg string) {
 	ts := time.Now().UTC().Format(time.RFC3339Nano)
 	setStatus(channelID, model.ChannelModelSyncStatus{
-		ChannelID:   channelID,
-		Status:      status,
-		LastSyncAt:  &ts,
-		AddedModels: additions.AddedModels,
-		AddedGrants: additions.AddedGrants,
-		Error:       errMsg,
+		ChannelID:     channelID,
+		Status:        status,
+		LastSyncAt:    &ts,
+		AddedModels:   changes.AddedModels,
+		AddedGrants:   changes.AddedGrants,
+		RemovedModels: changes.RemovedModels,
+		RemovedGrants: changes.RemovedGrants,
+		Error:         errMsg,
 	})
 }
 

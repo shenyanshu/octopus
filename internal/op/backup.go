@@ -14,7 +14,7 @@ import (
 
 // 渠道拆分为渠道, 凭据, 模型与渠道授权后导出结构变化, 版本随之递增;
 // 版本 5 起 api_keys.supported_models 由逗号分隔字符串改为 JSON 数组。
-const dbDumpVersion = 5
+const dbDumpVersion = 6
 
 // DBExportAll 导出完整数据库内容，包括所有统计数据。
 func DBExportAll(ctx context.Context) (*model.DBDump, error) {
@@ -74,7 +74,9 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 		return nil, fmt.Errorf("empty dump")
 	}
 
-	if dump.Version != 0 && dump.Version != dbDumpVersion {
+	// 接受旧版本 0(无版本字段) 和 5(前一代格式), 以及当前 6。
+	// 旧版本导入时, channel_models/channel_grants 的 sync_managed 默认为 false(手动/legacy)。
+	if dump.Version != 0 && dump.Version != 5 && dump.Version != dbDumpVersion {
 		return nil, fmt.Errorf("unsupported dump version: %d", dump.Version)
 	}
 
@@ -142,16 +144,24 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 		} else {
 			res.RowsAffected["channel_keys"] = n
 		}
-		if n, err := createUpsertAll(tx, dump.ChannelModels, []clause.Column{{Name: "id"}}); err != nil {
+		// channel_models/channel_grants 的 sync_managed 按来源版本分流:
+		//   v0/5: 旧 dump 无 sync_managed 字段, 强制 incoming 全部为 false(含 payload 夹带 true),
+		//         新行落 false, 冲突排除 sync_managed 保持目标来源。
+		//   v6 true 行: 新行落 true, 冲突排除 sync_managed 防止 false→true 升级。
+		//   v6 false 行: 新行落 false, 冲突 AssignmentColumns 含 sync_managed, 允许 true→false 降级。
+		nModels, err := upsertChannelModels(tx, dump.Version, dump.ChannelModels,
+			[]clause.Column{{Name: "id"}}, []string{"channel_id", "name"})
+		if err != nil {
 			return fmt.Errorf("import channel_models: %w", err)
-		} else {
-			res.RowsAffected["channel_models"] = n
 		}
-		if n, err := createUpsertAll(tx, dump.ChannelGrants, []clause.Column{{Name: "id"}}); err != nil {
+		res.RowsAffected["channel_models"] = nModels
+
+		nGrants, err := upsertChannelGrants(tx, dump.Version, dump.ChannelGrants,
+			[]clause.Column{{Name: "id"}}, []string{"channel_model_id", "channel_key_id", "protocols"})
+		if err != nil {
 			return fmt.Errorf("import channel_grants: %w", err)
-		} else {
-			res.RowsAffected["channel_grants"] = n
 		}
+		res.RowsAffected["channel_grants"] = nGrants
 		// 导入前读出已存在的 GroupItem ID, 用于区分本次真正插入的新行与被跳过的旧行。
 		existingItemIDs := make(map[int]bool, 0)
 		if len(dump.GroupItems) > 0 {
@@ -189,11 +199,21 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 				return fmt.Errorf("import group_items enabled: %w", err)
 			}
 		}
-		if n, err := createUpsertAll(tx, dump.LLMInfos, []clause.Column{{Name: "name"}}); err != nil {
-			return fmt.Errorf("import llm_infos: %w", err)
-		} else {
-			res.RowsAffected["llm_infos"] = n
+		// LLMInfos 导入按 source 分流: manual 遵循显式覆盖, auto 不覆盖目标 manual。
+		// 旧 dump 缺 source 字段时 JSON 解码为零值 "", 视为 auto 并清零四价。
+		llmManual, llmAuto, err := splitLLMInfosForImport(dump.LLMInfos)
+		if err != nil {
+			return err
 		}
+		n1, err := createDoNothing(tx, llmAuto)
+		if err != nil {
+			return fmt.Errorf("import llm_infos(auto): %w", err)
+		}
+		n2, err := createUpsertAll(tx, llmManual, []clause.Column{{Name: "name"}})
+		if err != nil {
+			return fmt.Errorf("import llm_infos(manual): %w", err)
+		}
+		res.RowsAffected["llm_infos"] = n1 + n2
 		if n, err := createDoNothing(tx, dump.APIKeys); err != nil {
 			return fmt.Errorf("import api_keys: %w", err)
 		} else {
@@ -270,5 +290,88 @@ func createUpsertSettings(tx *gorm.DB, rows []model.Setting) (int64, error) {
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value"}),
 	}).Create(&rows)
+	return result.RowsAffected, result.Error
+}
+
+// upsertChannelModels 按来源版本对 channel_models 做带 sync_managed 分流的 upsert。
+//
+//	v0/5: 强制 incoming 全部 SyncManaged=false(含 payload 夹带 true), 冲突排除 sync_managed 保持目标来源。
+//	v6 true 行: 新行落 true, 冲突排除 sync_managed 防止 false→true 升级。
+//	v6 false 行: 新行落 false, 冲突 AssignmentColumns 含 sync_managed, 允许 true→false 降级。
+//
+// 返回两次 upsert 的 RowsAffected 之和; 任一失败返回其 error, 不吞错。
+func upsertChannelModels(tx *gorm.DB, version int, rows []model.ChannelModel, conflictColumns []clause.Column, updateColumns []string) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	if version == 0 || version == 5 {
+		forced := make([]model.ChannelModel, len(rows))
+		copy(forced, rows)
+		for i := range forced {
+			forced[i].SyncManaged = false
+		}
+		return upsertWithColumns(tx, forced, conflictColumns, updateColumns)
+	}
+	var trueRows, falseRows []model.ChannelModel
+	for _, r := range rows {
+		if r.SyncManaged {
+			trueRows = append(trueRows, r)
+		} else {
+			falseRows = append(falseRows, r)
+		}
+	}
+	n1, err := upsertWithColumns(tx, trueRows, conflictColumns, updateColumns)
+	if err != nil {
+		return 0, err
+	}
+	n2, err := upsertWithColumns(tx, falseRows, conflictColumns, append(updateColumns, "sync_managed"))
+	if err != nil {
+		return 0, err
+	}
+	return n1 + n2, nil
+}
+
+// upsertChannelGrants 与 upsertChannelModels 同语义, 作用于 channel_grants。
+func upsertChannelGrants(tx *gorm.DB, version int, rows []model.ChannelGrant, conflictColumns []clause.Column, updateColumns []string) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	if version == 0 || version == 5 {
+		forced := make([]model.ChannelGrant, len(rows))
+		copy(forced, rows)
+		for i := range forced {
+			forced[i].SyncManaged = false
+		}
+		return upsertWithColumns(tx, forced, conflictColumns, updateColumns)
+	}
+	var trueRows, falseRows []model.ChannelGrant
+	for _, r := range rows {
+		if r.SyncManaged {
+			trueRows = append(trueRows, r)
+		} else {
+			falseRows = append(falseRows, r)
+		}
+	}
+	n1, err := upsertWithColumns(tx, trueRows, conflictColumns, updateColumns)
+	if err != nil {
+		return 0, err
+	}
+	n2, err := upsertWithColumns(tx, falseRows, conflictColumns, append(updateColumns, "sync_managed"))
+	if err != nil {
+		return 0, err
+	}
+	return n1 + n2, nil
+}
+
+// upsertWithColumns 以 clause.AssignmentColumns(updateColumns) 做 upsert, 跨方言兼容。
+// updateColumns 决定冲突时更新的列: 排除 sync_managed 则保留目标值, 含则降级为 incoming 值。
+func upsertWithColumns[T any](tx *gorm.DB, rows []T, conflictColumns []clause.Column, updateColumns []string) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	result := tx.Clauses(clause.OnConflict{
+		Columns:   conflictColumns,
+		DoUpdates: clause.AssignmentColumns(updateColumns),
+	}).CreateInBatches(rows, 100)
 	return result.RowsAffected, result.Error
 }

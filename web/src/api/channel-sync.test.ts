@@ -9,8 +9,10 @@ import {
 } from "../components/modules/channel/state.ts";
 import {
   classifyBatchSyncResult,
+  classifyEnableAllResult,
   classifySingleSyncResult,
   detectCompletedSyncs,
+  formatSyncChanges,
   formatSyncTime,
   hasRunningSync,
   MODEL_SYNC_INTERVAL_MAX_HOURS,
@@ -31,6 +33,8 @@ const status = (
   last_sync_at,
   added_models: 0,
   added_grants: 0,
+  removed_models: 0,
+  removed_grants: 0,
   error: "",
 });
 
@@ -245,4 +249,73 @@ test("formatSyncTime 缺失或非法时间返回 null, 合法时间给出本地�
   assert.equal(formatSyncTime("not-a-date", "zh-CN"), null);
   const formatted = formatSyncTime("2026-09-05T08:00:00Z", "zh-CN");
   assert.ok(formatted !== null && formatted.length > 0);
+});
+
+test("classifyEnableAllResult: 0 与正数给出不同反馈路径", () => {
+  // 已全部开启(或空库)不谎报"已开启 N 个"。
+  assert.deepEqual(classifyEnableAllResult(0), { kind: "none" });
+  assert.deepEqual(classifyEnableAllResult(5), { kind: "updated", count: 5 });
+});
+
+test("formatSyncChanges: no-op 四项为零给空数组, 增删各自独立分段", () => {
+  const t = {
+    added: (m: number, g: number) => `+${m}m +${g}g`,
+    removed: (m: number, g: number) => `-${m}m -${g}g`,
+  };
+  // 全 0: no-op 渲染噪音, 返回空。
+  assert.deepEqual(
+    formatSyncChanges(
+      {
+        added_models: 0,
+        added_grants: 0,
+        removed_models: 0,
+        removed_grants: 0,
+      },
+      t.added,
+      t.removed,
+    ),
+    [],
+  );
+  // 仅有新增。
+  assert.deepEqual(
+    formatSyncChanges(
+      {
+        added_models: 2,
+        added_grants: 0,
+        removed_models: 0,
+        removed_grants: 0,
+      },
+      t.added,
+      t.removed,
+    ),
+    ["+2m +0g"],
+  );
+  // 仅有移除(上游消失的自动管理项)。
+  assert.deepEqual(
+    formatSyncChanges(
+      {
+        added_models: 0,
+        added_grants: 0,
+        removed_models: 1,
+        removed_grants: 3,
+      },
+      t.added,
+      t.removed,
+    ),
+    ["-1m -3g"],
+  );
+  // 增删并存: 两段都给, partial 状态下也可能同时发生。
+  assert.deepEqual(
+    formatSyncChanges(
+      {
+        added_models: 2,
+        added_grants: 1,
+        removed_models: 1,
+        removed_grants: 0,
+      },
+      t.added,
+      t.removed,
+    ),
+    ["+2m +1g", "-1m -0g"],
+  );
 });

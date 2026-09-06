@@ -72,6 +72,7 @@ type ChannelModel struct {
 	ID           int    `json:"id" gorm:"primaryKey"`                                      // 渠道模型主键。
 	ChannelID    int    `json:"channel_id" gorm:"not null;index:idx_channel_model,unique"` // 所属渠道 ID。
 	Name         string `json:"name" gorm:"not null;index:idx_channel_model,unique"`       // 上游模型名称。
+	SyncManaged  bool   `json:"sync_managed" gorm:"not null;default:false"`                // 是否由自动同步创建; true 表示可被同步删除, false 为手动/legacy 保留。
 	StatsMetrics        // 该模型自身的累计统计。
 }
 
@@ -84,6 +85,7 @@ type ChannelGrant struct {
 	ChannelKeyID   int           `json:"channel_key_id" gorm:"not null;index:idx_channel_grant,unique"`                                      // 凭据 ID。
 	ChannelKey     *ChannelKey   `json:"channel_key,omitempty" gorm:"foreignKey:ChannelKeyID;references:ID;constraint:OnDelete:CASCADE"`     // 授权引用的凭据。
 	Protocols      Protocol      `json:"protocols" gorm:"not null"`                                                                          // 该组合支持的协议位掩码。
+	SyncManaged    bool          `json:"sync_managed" gorm:"not null;default:false"`                                                         // 是否由自动同步创建; true 表示可被同步删除, false 为手动/legacy 保留。
 }
 
 // 渠道读写副本: 编辑表单的完整形状, 读取与提交同构。
@@ -165,12 +167,14 @@ type ChannelFetchModel struct {
 // 重启后重置为空, 不保留历史记录; UI 轮询 /sync-status 读取此结构判断是否在运行及上次结果。
 // LastSyncAt 用 *string: 未同步过(running 或从未完成)为 nil, JSON 序列化为 null 而非 ""。
 type ChannelModelSyncStatus struct {
-	ChannelID   int     `json:"channel_id"`   // 渠道主键。
-	Status      string  `json:"status"`       // idle|running|success|partial|failed|skipped。
-	LastSyncAt  *string `json:"last_sync_at"` // 最近一次同步完成的 RFC3339Nano UTC 时间, 未同步过为 nil。
-	AddedModels int     `json:"added_models"` // 本次新增的模型数量。
-	AddedGrants int     `json:"added_grants"` // 本次新增的授权数量。
-	Error       string  `json:"error"`        // 失败或部分失败时的安全摘要, 不含 token 或上游原文。
+	ChannelID     int     `json:"channel_id"`     // 渠道主键。
+	Status        string  `json:"status"`         // idle|running|success|partial|failed|skipped。
+	LastSyncAt    *string `json:"last_sync_at"`   // 最近一次同步完成的 RFC3339Nano UTC 时间, 未同步过为 nil。
+	AddedModels   int     `json:"added_models"`   // 本次新增的模型数量。
+	AddedGrants   int     `json:"added_grants"`   // 本次新增的授权数量。
+	RemovedModels int     `json:"removed_models"` // 本次删除的模型数量(仅同步成功且非 Partial 时)。
+	RemovedGrants int     `json:"removed_grants"` // 本次删除的授权数量(仅同步成功且非 Partial 时)。
+	Error         string  `json:"error"`          // 失败或部分失败时的安全摘要, 不含 token 或上游原文。
 }
 
 // ChannelSyncStartResult 是单次或批量同步触发的立即返回, 不等待后台执行完成。
@@ -178,4 +182,9 @@ type ChannelSyncStartResult struct {
 	StartedIDs []int `json:"started_ids"` // 已接受并开始(或排队)同步的渠道 ID。
 	BusyIDs    []int `json:"busy_ids"`    // 正在同步中, 本次跳过的渠道 ID。
 	SkippedIDs []int `json:"skipped_ids"` // 因不满足前置条件(禁用/无可用凭据/auto_sync 关闭)跳过的渠道 ID。
+}
+
+// ChannelAutoSyncEnableAllResult 是批量开启自动同步的响应 data。
+type ChannelAutoSyncEnableAllResult struct {
+	UpdatedCount int `json:"updated_count"` // 实际更新(auto_sync_models false→true)的渠道数。
 }

@@ -1139,7 +1139,7 @@ func TestFinalizeStatusTableDriven(t *testing.T) {
 			clearTables(t)
 			chID := seedChannel(t, "finalize-"+tc.name, "http://unused.test", "sk", false)
 			// 直接调用 finalizeStatus, 不经过网络。
-			finalizeStatus(chID, tc.discoveries, op.SyncAdditions{})
+			finalizeStatus(chID, tc.discoveries, op.SyncChanges{})
 			s := waitStatus(t, chID, tc.wantStatus)
 			if s.Status != tc.wantStatus {
 				t.Errorf("status=%s, want %s", s.Status, tc.wantStatus)

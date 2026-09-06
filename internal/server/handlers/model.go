@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"fmt"
+	"math"
 	"net/http"
 	"strings"
 
@@ -33,6 +35,10 @@ func init() {
 		AddRoute(
 			router.NewRoute("/delete", http.MethodPost).
 				Handle(deleteLLM),
+		).
+		AddRoute(
+			router.NewRoute("/restore-auto", http.MethodPost).
+				Handle(restoreAutoLLM),
 		).
 		AddRoute(
 			router.NewRoute("/update-price", http.MethodPost).
@@ -101,46 +107,150 @@ func getModelList(c *gin.Context) {
 	}
 }
 
+// llmListItem 是 GET /api/v1/model/list 的每项格式, 替换旧 flat 响应。
+// source=manual 时 price 为存储四价; source=auto 时 price 为参考目录派生价格或 null(unknown)。
+type llmListItem struct {
+	Name       string          `json:"name"`
+	Source     string          `json:"source"`
+	PriceKnown bool            `json:"price_known"`
+	Price      *model.LLMPrice `json:"price"`
+}
+
 func listLLM(c *gin.Context) {
-	resp.Success(c, op.LLMList())
+	infos := op.LLMList()
+	items := make([]llmListItem, 0, len(infos))
+	for _, info := range infos {
+		p, known := op.LLMDerivePrice(info.Name)
+		item := llmListItem{
+			Name:       info.Name,
+			Source:     string(info.Source),
+			PriceKnown: known,
+		}
+		if known {
+			item.Price = &p
+		}
+		items = append(items, item)
+	}
+	resp.Success(c, items)
+}
+
+// llmPriceRequest 是 create/update 的 flat 请求格式, 四价必须存在且 >=0。
+// 不接收客户端 source/known 设定, 服务端强制 manual。
+type llmPriceRequest struct {
+	Name       string   `json:"name"`
+	Input      *float64 `json:"input"`
+	Output     *float64 `json:"output"`
+	CacheRead  *float64 `json:"cache_read"`
+	CacheWrite *float64 `json:"cache_write"`
+}
+
+// validateLLMPriceRequest 校验四价必须存在、有限且 >=0。
+func validateLLMPriceRequest(req *llmPriceRequest) error {
+	name := strings.ToLower(strings.TrimSpace(req.Name))
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	for _, field := range []struct {
+		name string
+		val  *float64
+	}{
+		{"input", req.Input},
+		{"output", req.Output},
+		{"cache_read", req.CacheRead},
+		{"cache_write", req.CacheWrite},
+	} {
+		if field.val == nil {
+			return fmt.Errorf("%s is required", field.name)
+		}
+		if math.IsNaN(*field.val) || math.IsInf(*field.val, 0) {
+			return fmt.Errorf("%s must be finite", field.name)
+		}
+		if *field.val < 0 {
+			return fmt.Errorf("%s must be >= 0", field.name)
+		}
+	}
+	return nil
 }
 
 // createLLM 校验并创建自定义模型价格。
 func createLLM(c *gin.Context) {
-	var model model.LLMInfo
-	if err := c.ShouldBindJSON(&model); err != nil {
+	var req llmPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	model.Name = strings.ToLower(strings.TrimSpace(model.Name))
-	if model.Name == "" {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
+	if err := validateLLMPriceRequest(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := op.LLMCreate(model, c.Request.Context()); err != nil {
+	info := model.LLMInfo{
+		Name: strings.ToLower(strings.TrimSpace(req.Name)),
+		LLMPrice: model.LLMPrice{
+			Input: *req.Input, Output: *req.Output,
+			CacheRead: *req.CacheRead, CacheWrite: *req.CacheWrite,
+		},
+	}
+	if err := op.LLMCreate(info, c.Request.Context()); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	resp.Success(c, model)
+	resp.Success(c, info)
 }
 
 // updateLLM 校验并更新自定义模型价格。
 func updateLLM(c *gin.Context) {
-	var model model.LLMInfo
-	if err := c.ShouldBindJSON(&model); err != nil {
+	var req llmPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	model.Name = strings.ToLower(strings.TrimSpace(model.Name))
-	if model.Name == "" {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
+	if err := validateLLMPriceRequest(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := op.LLMUpdate(model, c.Request.Context()); err != nil {
+	info := model.LLMInfo{
+		Name: strings.ToLower(strings.TrimSpace(req.Name)),
+		LLMPrice: model.LLMPrice{
+			Input: *req.Input, Output: *req.Output,
+			CacheRead: *req.CacheRead, CacheWrite: *req.CacheWrite,
+		},
+	}
+	if err := op.LLMUpdate(info, c.Request.Context()); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	resp.Success(c, model)
+	resp.Success(c, info)
+}
+
+// restoreAutoLLM 将指定模型从 manual 恢复为 auto, 返回恢复后的列表项。
+func restoreAutoLLM(c *gin.Context) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := strings.ToLower(strings.TrimSpace(req.Name))
+	if name == "" {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidParam)
+		return
+	}
+	info, err := op.LLMRestoreAuto(name, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, err.Error())
+		return
+	}
+	p, known := op.LLMDerivePrice(info.Name)
+	item := llmListItem{
+		Name:       info.Name,
+		Source:     string(info.Source),
+		PriceKnown: known,
+	}
+	if known {
+		item.Price = &p
+	}
+	resp.Success(c, item)
 }
 
 // deleteLLM 校验模型名并删除自定义模型价格。
@@ -173,26 +283,14 @@ func updateLLMPrice(c *gin.Context) {
 	resp.Success(c, nil)
 }
 
-// rebuildLLMPrice 清理幽灵模型并重新校准数据库中的剩余模型价格。
+// rebuildLLMPrice 补齐渠道模型缺的价格记录, 清理无引用的 auto 记录, 保留所有 manual。
 func rebuildLLMPrice(c *gin.Context) {
 	ctx := c.Request.Context()
-	if err := op.LLMCleanupGhosts(ctx); err != nil {
+	if err := op.LLMRebuild(ctx); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	llmInfos := op.LLMList()
-	for i := range llmInfos {
-		llmInfos[i].LLMPrice = model.LLMPrice{}
-		if modelPrice := price.GetLLMPrice(llmInfos[i].Name); modelPrice != nil {
-			llmInfos[i].LLMPrice = *modelPrice
-		}
-	}
-	if err := op.LLMBatchSave(llmInfos, ctx); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	resp.Success(c, gin.H{"count": len(llmInfos)})
+	resp.Success(c, gin.H{"count": op.LLMListCount()})
 }
 
 func getLastUpdateTime(c *gin.Context) {

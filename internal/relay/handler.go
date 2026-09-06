@@ -441,8 +441,13 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				if c.Writer.Header().Get("Content-Type") == "" {
 					c.Header("Content-Type", "application/json")
 				}
-				// 非流式响应已有完整用量, 本轮渠道和成员统计可在提交前一次完成。
-				metrics := usageMetrics(channelModel.Name, result.usage)
+				// 非流式响应已有完整用量, 一次性计算费用快照, 渠道统计与请求级记账复用。
+				// usage 可能为 nil(上游错误等无用量场景), 此时 accounting 为 nil, 用零值 metrics 统计。
+				accounting := computeUsageAccounting(channelModel.Name, request.Model, result.usage)
+				var metrics model.StatsMetrics
+				if accounting != nil {
+					metrics = accounting.Metrics
+				}
 				metrics.WaitTime = roundWaitTime
 				metrics.RequestSuccess = 1
 				_ = op.ChannelStatsUpdate(channel.ID, metrics)
@@ -457,13 +462,13 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				}
 				if err != nil {
 					if ctx.Err() != nil {
-						request.markCanceled(ctx.Err(), string(result.body), result.usage)
+						request.markCanceled(ctx.Err(), string(result.body), accounting)
 					} else {
-						request.markFailed(err, string(result.body), result.usage)
+						request.markFailed(err, string(result.body), accounting)
 					}
 					return
 				}
-				request.markSucceeded(string(result.body), result.usage)
+				request.markSucceeded(string(result.body), accounting)
 				return
 			}
 
@@ -537,8 +542,13 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			if aggregateErr != nil && err == nil && group.Mode == model.GroupModeScored {
 				err = aggregateErr
 			}
-			// 流式响应结束并聚合出用量后, 按最终结果完成本轮渠道和成员统计。
-			metrics := usageMetrics(channelModel.Name, result.usage)
+			// 流式响应结束并聚合出用量后, 一次性计算费用快照, 渠道统计与请求级记账复用。
+			// usage 可能为 nil(上游 401 等无用量场景), 此时 accounting 为 nil, 用零值 metrics 统计失败次数。
+			accounting := computeUsageAccounting(channelModel.Name, request.Model, result.usage)
+			var metrics model.StatsMetrics
+			if accounting != nil {
+				metrics = accounting.Metrics
+			}
 			metrics.WaitTime = roundWaitTime
 			if err == nil {
 				metrics.RequestSuccess = 1
@@ -552,15 +562,15 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				// 评分记账内部会忽略客户端取消与本地错误, 终态判定不受影响。
 				recordCommittedStreamFailure(group, item.ID, routeEpoch, err, upstreamFault, ctx.Err() != nil)
 				if ctx.Err() != nil {
-					request.markCanceled(ctx.Err(), string(responseBody), result.usage)
+					request.markCanceled(ctx.Err(), string(responseBody), accounting)
 					return
 				}
-				request.markFailed(err, string(responseBody), result.usage)
+				request.markFailed(err, string(responseBody), accounting)
 				return
 			}
 			// 评分模式: 流式响应完整交付客户端才算完整成功。
 			recordScoredSuccess(group, item.ID, routeEpoch)
-			request.markSucceeded(string(responseBody), result.usage)
+			request.markSucceeded(string(responseBody), accounting)
 			return
 		}
 	}

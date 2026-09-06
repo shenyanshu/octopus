@@ -28,7 +28,11 @@ import {
   useDeleteChannel,
   useSyncChannelModels,
 } from "@/api/channel";
-import { classifySingleSyncResult, formatSyncTime } from "@/api/channel-sync";
+import {
+  classifySingleSyncResult,
+  formatSyncChanges,
+  formatSyncTime,
+} from "@/api/channel-sync";
 import { type StatsMetricsFormatted } from "@/api/stats";
 import { useMorphingDialog } from "@/components/ui/morphing-dialog";
 import {
@@ -529,14 +533,15 @@ export function ChannelStats({
         </span>
         {syncTime && <span className="tabular-nums">{syncTime}</span>}
         {syncEntry &&
-          (syncEntry.added_models > 0 || syncEntry.added_grants > 0) && (
-            <span className="tabular-nums">
-              {tSync("added", {
-                models: syncEntry.added_models,
-                grants: syncEntry.added_grants,
-              })}
+          formatSyncChanges(
+            syncEntry,
+            (models, grants) => tSync("added", { models, grants }),
+            (models, grants) => tSync("removed", { models, grants }),
+          ).map((part) => (
+            <span key={part} className="tabular-nums">
+              {part}
             </span>
-          )}
+          ))}
         {/* error 原文已由后端保证安全, 直接展示; 行内截断, 全文放在 title。 */}
         {syncEntry?.error && (
           <span

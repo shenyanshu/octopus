@@ -16,7 +16,7 @@ import (
 type channelCanonicalState struct {
 	config model.ChannelConfig
 	keys   []keyCanonical
-	models []string
+	models []modelCanonical
 	grants []grantCanonical
 }
 
@@ -26,10 +26,18 @@ type keyCanonical struct {
 	enabled bool
 }
 
+// modelCanonical 记录模型名与同步管理标记, 导入前后比较以判断是否需要轮转 revision。
+type modelCanonical struct {
+	name        string
+	syncManaged bool
+}
+
+// grantCanonical 记录授权的模型/凭据/协议/同步管理标记。
 type grantCanonical struct {
-	modelName string
-	keyName   string
-	protocols model.Protocol
+	modelName   string
+	keyName     string
+	protocols   model.Protocol
+	syncManaged bool
 }
 
 // snapshotChannelCanonical 从 DB 读取渠道的可编辑状态。
@@ -78,19 +86,20 @@ func snapshotChannelCanonical(tx *gorm.DB, channelID int) (channelCanonicalState
 	sort.Slice(ks, func(i, j int) bool { return ks[i].name < ks[j].name })
 	state.keys = ks
 
-	ms := make([]string, len(models))
+	ms := make([]modelCanonical, len(models))
 	for i, m := range models {
-		ms[i] = m.Name
+		ms[i] = modelCanonical{name: m.Name, syncManaged: m.SyncManaged}
 	}
-	sort.Strings(ms)
+	sort.Slice(ms, func(i, j int) bool { return ms[i].name < ms[j].name })
 	state.models = ms
 
 	gs := make([]grantCanonical, len(grants))
 	for i, g := range grants {
 		gs[i] = grantCanonical{
-			modelName: modelNameByID[g.ChannelModelID],
-			keyName:   keyNameByID[g.ChannelKeyID],
-			protocols: g.Protocols,
+			modelName:   modelNameByID[g.ChannelModelID],
+			keyName:     keyNameByID[g.ChannelKeyID],
+			protocols:   g.Protocols,
+			syncManaged: g.SyncManaged,
 		}
 	}
 	sort.Slice(gs, func(i, j int) bool {

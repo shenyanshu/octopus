@@ -227,11 +227,11 @@
     "llmPrice": {
       "title": "Model Pricing",
       "updateInterval": {
-        "label": "Auto Update Interval (hours)",
+        "label": "Reference price update interval (hours)",
         "placeholder": "Enter interval in hours"
       },
       "manualUpdate": {
-        "label": "Manual Price Update",
+        "label": "Sync reference prices",
         "button": "Update Now",
         "updating": "Updating..."
       },
@@ -241,7 +241,7 @@
       "updateFailed": "Failed to update price",
       "rebuild": {
         "label": "Rebuild price data",
-        "description": "Rematch and clean up model prices\nManually configured prices will be reset",
+        "description": "Backfills missing prices and re-resolves references\nManual prices are never overwritten\nHistorical costs are not recalculated",
         "button": "Rebuild",
         "cancel": "Cancel",
         "confirm": "Confirm rebuild",
@@ -367,7 +367,8 @@
       "cacheWrite": "Cache Write",
       "cancel": "Cancel",
       "submit": "Create",
-      "submitting": "Creating..."
+      "submitting": "Creating...",
+      "invalidPrice": "All four prices are required: 0 or a positive number, none empty."
     },
     "toast": {
       "updated": "Model price updated",
@@ -379,7 +380,10 @@
       "inputCache": "Input/Cache",
       "outputCache": "Output/Cache",
       "edit": "Edit",
-      "delete": "Delete"
+      "delete": "Delete",
+      "manual": "Manual",
+      "auto": "Auto",
+      "unknownPrice": "Unknown price"
     },
     "overlay": {
       "cancel": "Cancel",
@@ -389,7 +393,14 @@
       "output": "Output",
       "cacheRead": "Cache Read",
       "cacheWrite": "Cache Write",
-      "save": "Save"
+      "save": "Save",
+      "unknownHint": "No price yet. Fill all four fields to save a manual price.",
+      "invalidPrice": "All four prices are required: 0 or a positive number, none empty.",
+      "restoreAuto": "Restore auto pricing",
+      "restoreAutoConfirm": "Discard manual price?",
+      "restoring": "Restoring...",
+      "restored": "Restored to auto pricing",
+      "restoreFailed": "Restore failed"
     }
   },
   "log": {
@@ -437,7 +448,10 @@
       "stopFailed": "Failed to stop current round",
       "waitingChannelSelection": "Waiting for channel selection",
       "waitingResponse": "Waiting for upstream response",
-      "responseStreaming": "Upstream responded; streaming is in progress"
+      "responseStreaming": "Upstream responded; streaming is in progress",
+      "costPending": "-",
+      "estimatedByGroup": "Estimated by group reference price ({model})",
+      "costUnknown": "Not priced"
     }
   },
   "channel": {
@@ -479,7 +493,7 @@
       "enabled": "Enabled",
       "proxy": "Use proxy",
       "autoSyncModels": "Auto-sync models",
-      "autoSyncModelsHint": "When enabled, models are topped up per key on the system interval. Add-only: turning it off never removes existing models.",
+      "autoSyncModelsHint": "On each key's sync, new upstream models are added; auto-managed entries that disappeared upstream are removed only when that key's sync fully succeeds with a non-empty result. Failures, partial syncs, or empty results remove nothing; manual and historical entries are kept. Turning this off never deletes existing models.",
       "keys": "Credentials",
       "keyAdd": "Add credential",
       "keyName": "Name",
@@ -531,6 +545,7 @@
       "syncNow": "Sync now",
       "disabledChannel": "Channel is disabled",
       "added": "+{models} models, +{grants} grants",
+      "removed": "-{models} models, -{grants} grants",
       "toastStarted": "Sync started",
       "toastBusy": "Sync already in progress",
       "toastSkipped": "Skipped: channel and key must be enabled",
@@ -538,7 +553,14 @@
       "batchSyncHint": "Sync channels with auto-sync enabled",
       "batchStarted": "Started syncing {count} channels",
       "batchBusy": "{count} channels already syncing",
-      "batchNone": "No channels available to sync"
+      "batchNone": "No channels available to sync",
+      "enableAll": "Enable auto-sync for all",
+      "enableAllHint": "Enable auto-sync for every channel; disabled channels stay disabled and no sync is triggered",
+      "enableAllEmpty": "No channels to operate on",
+      "enableAllConfirm": "Confirm",
+      "enableAllCancel": "Cancel",
+      "enableAllDone": "Auto-sync enabled for {count} channels",
+      "enableAllNone": "All channels already have auto-sync enabled"
     }
   }
 }

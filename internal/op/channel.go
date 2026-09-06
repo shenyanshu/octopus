@@ -286,6 +286,13 @@ func ChannelCreate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 			}
 		}
 	}
+	// 事务内可能新增了 auto 价格记录(ensureAutoLLMInfo), 刷新 LLM 缓存使 API 可见。
+	if err := llmRefreshCache(ctx); err != nil {
+		return nil, mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to refresh llm cache: %w", err),
+			Mutation:   mutation,
+		}
+	}
 	// 返回的 detail 从 DB 组装: revision 与子表来自同一提交快照, 不混缓存。
 	created, err := ChannelDetailGet(ctx, channel.ID)
 	if err != nil {
@@ -371,6 +378,13 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 	if err := refreshGroupsAfterCommit(ctx); err != nil {
 		return nil, mutation, &PostCommitError{
 			RefreshErr: fmt.Errorf("failed to refresh groups: %w", err),
+			Mutation:   mutation,
+		}
+	}
+	// 事务内可能新增了 auto 价格记录(ensureAutoLLMInfo), 刷新 LLM 缓存使 API 可见。
+	if err := llmRefreshCache(ctx); err != nil {
+		return nil, mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to refresh llm cache: %w", err),
 			Mutation:   mutation,
 		}
 	}
@@ -889,11 +903,19 @@ func syncChannelModels(tx *gorm.DB, channelID int, requested []string) error {
 	}
 	for _, requestedModel := range requested {
 		if _, ok := existingByName[requestedModel]; ok {
+			// 已有模型也补缺 auto 价格记录; ON CONFLICT DO NOTHING 不覆盖已有 manual。
+			if err := ensureAutoLLMInfo(tx, requestedModel); err != nil {
+				return err
+			}
 			delete(existingByName, requestedModel)
 			continue
 		}
 		if err := tx.Create(&model.ChannelModel{ChannelID: channelID, Name: requestedModel}).Error; err != nil {
 			return fmt.Errorf("failed to create channel model: %w", err)
+		}
+		// 事务内补缺 auto 价格记录, ON CONFLICT DO NOTHING 不覆盖已有 manual。
+		if err := ensureAutoLLMInfo(tx, requestedModel); err != nil {
+			return err
 		}
 	}
 	deletedModelIDs := make([]int, 0, len(existingByName))

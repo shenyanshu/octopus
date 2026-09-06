@@ -391,6 +391,9 @@ export type ChannelModelSyncStatus = {
   last_sync_at: string | null;
   added_models: number;
   added_grants: number;
+  // 仅完整成功且上游非空时移除本凭据已消失的自动管理项; 部分成功/失败/空结果不删, 手动与历史项始终保留。
+  removed_models: number;
+  removed_grants: number;
   error: string;
 };
 
@@ -509,5 +512,37 @@ export function useSyncAllChannelModels() {
       queryClient.invalidateQueries({
         queryKey: channelSyncStatusQueryOptions.queryKey,
       }),
+  });
+}
+
+// ChannelEnableAllAutoSyncResult 是批量开启自动同步的回执; 后端只在 true->false 实际翻转时计数,
+// 已全部开启(含空库)时 count 为 0。
+export type ChannelEnableAllAutoSyncResult = {
+  updated_count: number;
+};
+
+/**
+ * 为所有渠道开启模型自动同步 Hook；只翻转 auto_sync_models, 绝不改启用状态也不触发同步。
+ * 已开启的渠道不受影响, 返回值计数为实际变更数(0 即全部已开启)。
+ *
+ * 后端为此操作轮换受影响渠道的 revision, 打开中的编辑草稿会因令牌失配在保存时收到 409,
+ * 由草稿内既有冲突流程处理; 这里不重挂载表单, 只失效查询让下一次打开取到新值。
+ *
+ * @example
+ * const enableAll = useEnableAllChannelAutoSync();
+ * enableAll.mutate(undefined, { onSuccess: ({ updated_count }) => ... });
+ */
+export function useEnableAllChannelAutoSync() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      apiRequest<ChannelEnableAllAutoSyncResult>(
+        "/api/v1/channel/auto-sync/enable-all",
+        { method: "POST", body: {} },
+      ),
+    // ["channels"] 前缀失效覆盖 detail/stats/sync-status/grants, 跟随项目既有惯例;
+    // 不重挂载打开的编辑表单, 草稿与捕获的 revision 原样保留。
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels"] }),
   });
 }

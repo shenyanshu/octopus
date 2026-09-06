@@ -128,6 +128,10 @@ func GetStatus() []model.ChannelModelSyncStatus {
 	return result
 }
 
+// commitAndRefresh 是提交后缓存刷新的可测试 seam, 默认为 op.ChannelSyncCommitAndRefresh。
+// 测试覆盖为返回传入 mutation + PostCommitError 以验证缓存未刷新时的编排路径。
+var commitAndRefresh = op.ChannelSyncCommitAndRefresh
+
 // ApplyChannelMutation 是渠道写操作 mutation 的统一编排。
 func ApplyChannelMutation(mutation *op.ChannelMutation) {
 	if mutation == nil {
@@ -201,7 +205,7 @@ func runWorker(channelID int, isAuto bool) {
 	case slots <- struct{}{}:
 		defer func() { <-slots }()
 	case <-rootCtx.Done():
-		setStatusDone(channelID, "skipped", op.SyncAdditions{}, "coordinator stopped before start")
+		setStatusDone(channelID, "skipped", op.SyncChanges{}, "coordinator stopped before start")
 		return
 	}
 
@@ -212,15 +216,15 @@ func runWorker(channelID int, isAuto bool) {
 	// 自动触发时还需验证 AutoSyncModels 仍为 true。
 	current, err := op.ChannelSyncReadSnapshot(channelID)
 	if err != nil {
-		setStatusDone(channelID, "failed", op.SyncAdditions{}, "channel not found after slot")
+		setStatusDone(channelID, "failed", op.SyncChanges{}, "channel not found after slot")
 		return
 	}
 	if !current.Config.Enabled || len(current.EnabledKeys) == 0 {
-		setStatusDone(channelID, "skipped", op.SyncAdditions{}, "channel disabled or no enabled keys")
+		setStatusDone(channelID, "skipped", op.SyncChanges{}, "channel disabled or no enabled keys")
 		return
 	}
 	if isAuto && !current.Config.AutoSyncModels {
-		setStatusDone(channelID, "skipped", op.SyncAdditions{}, "auto sync disabled")
+		setStatusDone(channelID, "skipped", op.SyncChanges{}, "auto sync disabled")
 		return
 	}
 
@@ -239,34 +243,36 @@ func runChannelSync(ctx context.Context, snapshot op.ChannelSyncSnapshot, isAuto
 	// Bug 3 修复: 写锁内完全以最新 DB snapshot 比对, 不混 cache(op.ChannelGet)。
 	latest, err := op.ChannelSyncReadSnapshot(channelID)
 	if err != nil {
-		setStatusDone(channelID, "failed", op.SyncAdditions{}, "failed to re-read channel config")
+		setStatusDone(channelID, "failed", op.SyncChanges{}, "failed to re-read channel config")
 		return
 	}
 	// 网络前已验证 eligible, 这里验证配置未变(BaseURL/paths/regex/header/proxy/keys)。
 	if !op.ChannelSyncConfigUnchanged(snapshot, latest, latestKeys(latest), isAuto) {
-		setStatusDone(channelID, "skipped", op.SyncAdditions{}, "channel config changed during sync")
+		setStatusDone(channelID, "skipped", op.SyncChanges{}, "channel config changed during sync")
 		return
 	}
 
-	mutation, additions, applyErr := applyDiscovery(ctx, channelID, discoveries)
+	mutation, changes, applyErr := applyDiscovery(ctx, channelID, discoveries)
 	if applyErr != nil {
 		// Bug 6 修复: 日志用固定安全分类含 channelID, 不截断原始错误(可能含 model 名/SQL)。
 		log.Warnf("channelsync: channel %d apply failed: %s", channelID, classifyError(applyErr))
-		setStatusDone(channelID, "failed", op.SyncAdditions{}, classifyError(applyErr))
+		setStatusDone(channelID, "failed", op.SyncChanges{}, classifyError(applyErr))
 		return
 	}
 
-	mutation, commitErr := op.ChannelSyncCommitAndRefresh(ctx, channelID, mutation)
+	// commitAndRefresh 是提交后缓存刷新的窄 seam: 测试覆盖为返回 mutation + PostCommitError
+	// 以验证 DB 已提交但缓存未刷新时的 cache/route/SSE 编排。生产默认为真实实现。
+	mutation, commitErr := commitAndRefresh(ctx, channelID, mutation)
 	if mutation != nil {
 		ApplyChannelMutation(mutation)
 	}
 	if commitErr != nil {
 		log.Warnf("channelsync: channel %d post-commit refresh failed: %s", channelID, classifyError(commitErr))
-		setStatusDone(channelID, "failed", additions, "post-commit refresh failed")
+		setStatusDone(channelID, "failed", changes, "post-commit refresh failed")
 		return
 	}
 
-	finalizeStatus(channelID, discoveries, additions)
+	finalizeStatus(channelID, discoveries, changes)
 }
 
 // latestKeys 将 snapshot 的 EnabledKeys 转为 ChannelKey 列表供 config 比对。
@@ -303,27 +309,27 @@ func discoverOneKey(ctx context.Context, snapshot op.ChannelSyncSnapshot, key op
 	return op.KeyDiscovery{KeyID: key.ID, Models: result.Models, Partial: result.Partial}
 }
 
-func applyDiscovery(ctx context.Context, channelID int, discoveries []op.KeyDiscovery) (*op.ChannelMutation, op.SyncAdditions, error) {
+func applyDiscovery(ctx context.Context, channelID int, discoveries []op.KeyDiscovery) (*op.ChannelMutation, op.SyncChanges, error) {
 	var mutation *op.ChannelMutation
-	var additions op.SyncAdditions
+	var changes op.SyncChanges
 	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		m, a, e := op.ChannelSyncApplyDiscovery(tx, channelID, discoveries)
 		mutation = m
-		additions = a
+		changes = a
 		return e
 	})
 	// Bug 5: 事务回滚时 mutation 必须为 nil, counts 必须为零, 不发布未提交事实。
 	if err != nil {
-		return nil, op.SyncAdditions{}, err
+		return nil, op.SyncChanges{}, err
 	}
-	return mutation, additions, nil
+	return mutation, changes, nil
 }
 
 // finalizeStatus 根据探测结果设置最终状态。
 // 成功指 d.Err==nil: 包括完全成功(两侧都成功)与部分成功(Partial=true, 单侧失败但另一侧有可用模型)。
 // 失败指 d.Err!=nil(两侧协议都失败, 无可用模型)。
 // 无成功 key → failed; 成功+任意失败 → partial; 全成功 → success。
-func finalizeStatus(channelID int, discoveries []op.KeyDiscovery, additions op.SyncAdditions) {
+func finalizeStatus(channelID int, discoveries []op.KeyDiscovery, changes op.SyncChanges) {
 	var hasSuccess, hasFailure bool
 	for _, d := range discoveries {
 		switch {
@@ -340,10 +346,10 @@ func finalizeStatus(channelID int, discoveries []op.KeyDiscovery, additions op.S
 	}
 	switch {
 	case !hasSuccess:
-		setStatusDone(channelID, "failed", additions, "all keys failed")
+		setStatusDone(channelID, "failed", changes, "all keys failed")
 	case hasFailure:
-		setStatusDone(channelID, "partial", additions, "some keys failed")
+		setStatusDone(channelID, "partial", changes, "some keys failed")
 	default:
-		setStatusDone(channelID, "success", additions, "")
+		setStatusDone(channelID, "success", changes, "")
 	}
 }

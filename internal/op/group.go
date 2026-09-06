@@ -97,6 +97,19 @@ func ApplyGroupMemberDeltas(deltas []GroupMembersDelta) {
 			}
 		}
 		sortGroupItems(survivors)
+		// 删除的成员可能是当前手动指定的 active_item_id: 若 active 不在存活集合中则清零。
+		if group.ActiveItemID != 0 {
+			activeSurvives := false
+			for _, item := range survivors {
+				if item.ID == group.ActiveItemID {
+					activeSurvives = true
+					break
+				}
+			}
+			if !activeSurvives {
+				group.ActiveItemID = 0
+			}
+		}
 		group.Items = survivors
 		groupCache.Set(group.ID, group)
 	}

@@ -227,11 +227,11 @@
     "llmPrice": {
       "title": "模型价格",
       "updateInterval": {
-        "label": "自动更新间隔（小时）",
+        "label": "参考价自动更新间隔（小时）",
         "placeholder": "请输入间隔（小时）"
       },
       "manualUpdate": {
-        "label": "手动更新价格",
+        "label": "同步参考价格",
         "button": "立即更新",
         "updating": "更新中..."
       },
@@ -241,7 +241,7 @@
       "updateFailed": "价格更新失败",
       "rebuild": {
         "label": "重建价格数据",
-        "description": "重新匹配并清理模型价格\n会重置手动设置的价格",
+        "description": "补齐缺失价格并重新解析\n不会覆盖手动价格\n历史费用不会重新计算",
         "button": "重建",
         "cancel": "取消",
         "confirm": "确认重建",
@@ -367,7 +367,8 @@
       "cacheWrite": "缓存写入",
       "cancel": "取消",
       "submit": "创建",
-      "submitting": "创建中..."
+      "submitting": "创建中...",
+      "invalidPrice": "请输入四项价格：0 或正数，不能为空。"
     },
     "toast": {
       "updated": "模型价格已更新",
@@ -379,7 +380,10 @@
       "inputCache": "输入/缓存",
       "outputCache": "输出/缓存",
       "edit": "编辑",
-      "delete": "删除"
+      "delete": "删除",
+      "manual": "手动",
+      "auto": "自动",
+      "unknownPrice": "未知价格"
     },
     "overlay": {
       "cancel": "取消",
@@ -389,7 +393,14 @@
       "output": "输出",
       "cacheRead": "缓存读取",
       "cacheWrite": "缓存写入",
-      "save": "保存"
+      "save": "保存",
+      "unknownHint": "该模型暂无价格，填写四项后保存为手动价。",
+      "invalidPrice": "请输入四项价格：0 或正数，不能为空。",
+      "restoreAuto": "恢复自动定价",
+      "restoreAutoConfirm": "确认放弃手动价",
+      "restoring": "恢复中...",
+      "restored": "已恢复自动定价",
+      "restoreFailed": "恢复失败"
     }
   },
   "log": {
@@ -437,7 +448,10 @@
       "stopFailed": "停止当前轮次失败",
       "waitingChannelSelection": "正在等待选择渠道",
       "waitingResponse": "正在等待上游响应",
-      "responseStreaming": "上游已响应，流式传输正在进行"
+      "responseStreaming": "上游已响应，流式传输正在进行",
+      "costPending": "-",
+      "estimatedByGroup": "按分组名参考价估算（{model}）",
+      "costUnknown": "未计价"
     }
   },
   "channel": {
@@ -479,7 +493,7 @@
       "enabled": "启用",
       "proxy": "使用代理",
       "autoSyncModels": "自动同步模型",
-      "autoSyncModelsHint": "开启后按系统周期逐凭据补充模型，只增不删；关闭不会删除已有模型。",
+      "autoSyncModelsHint": "开启后按系统周期逐凭据同步模型：新增上游多出的模型，仅在该凭据完整成功且非空时移除其已消失的自动管理项；失败、部分成功或空结果不删除，手动添加与历史项不受影响。关闭不会删除已有模型。",
       "keys": "凭据",
       "keyAdd": "添加凭据",
       "keyName": "名称",
@@ -531,6 +545,7 @@
       "syncNow": "立即同步",
       "disabledChannel": "渠道已禁用，无法同步",
       "added": "新增 {models} 个模型、{grants} 条授权",
+      "removed": "移除 {models} 个模型、{grants} 条授权",
       "toastStarted": "已开始同步",
       "toastBusy": "同步正在进行中",
       "toastSkipped": "已跳过：需要启用的渠道与凭据",
@@ -538,7 +553,14 @@
       "batchSyncHint": "同步已开启自动同步的渠道",
       "batchStarted": "已开始同步 {count} 个渠道",
       "batchBusy": "{count} 个渠道正在同步中",
-      "batchNone": "暂无可同步的渠道"
+      "batchNone": "暂无可同步的渠道",
+      "enableAll": "全部开启自动同步",
+      "enableAllHint": "为所有渠道开启自动同步；已禁用的渠道仍保持禁用，不会立即执行同步",
+      "enableAllEmpty": "暂无可操作的渠道",
+      "enableAllConfirm": "确认开启",
+      "enableAllCancel": "取消",
+      "enableAllDone": "已为 {count} 个渠道开启自动同步",
+      "enableAllNone": "所有渠道均已开启自动同步"
     }
   }
 }

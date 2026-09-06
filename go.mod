@@ -20,8 +20,11 @@ require (
 	golang.org/x/net v0.57.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.2
+	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
 )
+
+require github.com/mattn/go-sqlite3 v1.14.22 // indirect
 
 require (
 	cloud.google.com/go/auth v0.23.0 // indirect

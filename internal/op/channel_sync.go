@@ -35,10 +35,13 @@ type KeyDiscovery struct {
 	Err     error
 }
 
-// SyncAdditions 是本次同步实际新增的模型与授权数量, 在 INSERT 处统计。
-type SyncAdditions struct {
-	AddedModels int
-	AddedGrants int
+// SyncChanges 是本次同步实际新增与删除的模型和授权数量, 在 INSERT/DELETE 处统计。
+// 仅在同步成功且非 Partial 时才可能发生删除; Partial/错误/空结果不删任何授权或模型。
+type SyncChanges struct {
+	AddedModels   int
+	AddedGrants   int
+	RemovedModels int
+	RemovedGrants int
 }
 
 // ChannelSyncReadSnapshot 读取渠道当前配置与启用凭据, 供事务外探测使用。
@@ -67,74 +70,98 @@ func ChannelSyncReadSnapshot(channelID int) (ChannelSyncSnapshot, error) {
 
 // ChannelSyncApplyDiscovery 在写锁内将探测发现的模型与授权增量应用到渠道。
 // 只创建尚不存在的模型与授权: 已有模型不删, 已有授权不改协议。
+// 仅同步成功且非 Partial 且返回模型非空时, 删除该 key 下不再返回的 sync_managed=true 授权与孤儿模型。
 // 每条凭据的发现结果只授权给该凭据, 不交叉授权其他凭据。
 // 成功后在同一事务内触发规则分组补齐并返回 mutation, 供调用方发布 SSE。
-// 返回的 SyncAdditions 在 INSERT 处统计, 确保计数准确。
-func ChannelSyncApplyDiscovery(tx *gorm.DB, channelID int, discoveries []KeyDiscovery) (*ChannelMutation, SyncAdditions, error) {
+// 返回的 SyncChanges 在 INSERT/DELETE 处统计, 确保计数准确。
+func ChannelSyncApplyDiscovery(tx *gorm.DB, channelID int, discoveries []KeyDiscovery) (*ChannelMutation, SyncChanges, error) {
 	before, err := channelGroupMembersSnapshot(tx, channelID)
 	if err != nil {
-		return nil, SyncAdditions{}, err
+		return nil, SyncChanges{}, err
 	}
-	additions := SyncAdditions{}
+	changes := SyncChanges{}
 	for _, disc := range discoveries {
 		if disc.Err != nil || len(disc.Models) == 0 {
 			continue
 		}
 		key, err := resolveChannelKey(tx, channelID, disc.KeyID)
 		if err != nil {
-			return nil, SyncAdditions{}, fmt.Errorf("failed to resolve key %d: %w", disc.KeyID, err)
+			return nil, SyncChanges{}, fmt.Errorf("failed to resolve key %d: %w", disc.KeyID, err)
 		}
 		for _, m := range disc.Models {
 			modelID, created, err := ensureChannelModel(tx, channelID, m.Name)
 			if err != nil {
-				return nil, SyncAdditions{}, fmt.Errorf("failed to ensure model %s: %w", m.Name, err)
+				return nil, SyncChanges{}, fmt.Errorf("failed to ensure model %s: %w", m.Name, err)
 			}
 			if created {
-				additions.AddedModels++
+				// 自动同步新建的模型标记为 sync_managed=true, 可被后续同步删除。
+				if err := tx.Model(&model.ChannelModel{}).Where("id = ?", modelID).
+					Update("sync_managed", true).Error; err != nil {
+					return nil, SyncChanges{}, fmt.Errorf("failed to mark model %s as sync_managed: %w", m.Name, err)
+				}
+				changes.AddedModels++
+			}
+			if err := ensureAutoLLMInfo(tx, m.Name); err != nil {
+				return nil, SyncChanges{}, err
 			}
 			grantCreated, err := ensureChannelGrant(tx, modelID, key.ID, m.Protocols)
 			if err != nil {
-				return nil, SyncAdditions{}, fmt.Errorf("failed to ensure grant for %s: %w", m.Name, err)
+				return nil, SyncChanges{}, fmt.Errorf("failed to ensure grant for %s: %w", m.Name, err)
 			}
 			if grantCreated {
-				additions.AddedGrants++
+				// 自动同步新建的授权标记为 sync_managed=true。
+				if err := markGrantSyncManaged(tx, modelID, key.ID); err != nil {
+					return nil, SyncChanges{}, fmt.Errorf("failed to mark grant for %s as sync_managed: %w", m.Name, err)
+				}
+				changes.AddedGrants++
 			}
 		}
 	}
-	// 同步成功后轮转渠道版本令牌: 进行中提交了 expected revision 的全量更新将因令牌过期而 CAS 失败,
-	// 避免覆盖刚写入的模型/授权。新增了模型或授权即改变可编辑状态, 都轮转;
-	// 空同步不改令牌, 避免无谓的并发更新失败。
-	if additions.AddedModels > 0 || additions.AddedGrants > 0 {
+	// 删除不再被上游返回的 sync_managed=true 授权和孤儿模型。
+	// 仅成功且非 Partial 且返回模型非空的凭据参与; 其他凭据的授权一律不动。
+	delResult, err := applySyncDeletions(tx, channelID, discoveries)
+	if err != nil {
+		return nil, SyncChanges{}, fmt.Errorf("failed to apply sync deletions: %w", err)
+	}
+	changes.RemovedGrants = delResult.removedGrants
+	changes.RemovedModels = delResult.removedModels
+	// 同步成功后轮转渠道版本令牌: 新增或删除了模型/授权即改变可编辑状态, 都轮转;
+	// 空同步(no additions and no removals)不改令牌, 避免无谓的并发更新失败。
+	if changes.AddedModels > 0 || changes.AddedGrants > 0 || changes.RemovedModels > 0 || changes.RemovedGrants > 0 {
 		if err := tx.Model(&model.Channel{}).Where("id = ?", channelID).
 			Update("revision", uuid.NewString()).Error; err != nil {
-			return nil, SyncAdditions{}, fmt.Errorf("failed to rotate channel revision: %w", err)
+			return nil, SyncChanges{}, fmt.Errorf("failed to rotate channel revision: %w", err)
 		}
 	}
-	// 无新增授权不补齐分组: 全失败或空成功不触发已有匹配授权的补齐。
-	if additions.AddedGrants == 0 {
-		return nil, additions, nil
+	// 无新增且无删除授权时不补齐/收敛分组: 纯空同步不触发已有匹配授权的补齐。
+	if changes.AddedGrants == 0 && changes.RemovedGrants == 0 {
+		return nil, changes, nil
 	}
 	if err := supplementGroupsForChannel(tx, channelID); err != nil {
-		return nil, SyncAdditions{}, fmt.Errorf("failed to supplement groups: %w", err)
+		return nil, SyncChanges{}, fmt.Errorf("failed to supplement groups: %w", err)
 	}
 	after, err := channelGroupMembersSnapshot(tx, channelID)
 	if err != nil {
-		return nil, SyncAdditions{}, err
+		return nil, SyncChanges{}, err
 	}
 	mutation, err := committedChannelMutationFromTx(tx, before, after)
-	return mutation, additions, err
+	return mutation, changes, err
+}
+
+// markGrantSyncManaged 将刚创建的授权标记为 sync_managed=true。
+func markGrantSyncManaged(tx *gorm.DB, modelID, keyID int) error {
+	return tx.Model(&model.ChannelGrant{}).
+		Where("channel_model_id = ? AND channel_key_id = ?", modelID, keyID).
+		Update("sync_managed", true).Error
 }
 
 // ChannelSyncCommitAndRefresh 仿 ChannelUpdate: 事务已提交后刷新渠道子表缓存与分组缓存,
 // 任一失败返回 PostCommitError 携带已提交 mutation 与 additions。
 // 调用方必须在 groupGate 写锁内调用: cache/route/SSE 全序列在写锁内完成。
 //
-// 先发布已提交的 parent revision 到 channelCache, 再刷新子表与分组。
-// 事务内已轮转 DB revision, 但 channelCache 仍持旧令牌: 若不发布,
-// ChannelDetailGet 会返回过期值使后续 CAS 全量更新全部失败。
-// 从 DB 读实际已提交的 revision, 保留缓存的实时统计; DB 读失败说明事务可能未提交,
-// 不能伪造令牌, 返回 PostCommitError。
-// 后续 child/group 刷新失败时已提交 revision 已发布, 令牌事实不丢。
+// 先重载子缓存, 成功后从 DB 读已提交的 parent(含轮转后的 revision)发布到 channelCache,
+// 保留缓存的实时统计。DB 读失败不能伪造令牌, 返回 PostCommitError;
+// 此时事务已提交, DB 内 revision 与新增项已落库, ChannelDetailGet 仍可读到一致状态。
 func ChannelSyncCommitAndRefresh(ctx context.Context, channelID int, mutation *ChannelMutation) (*ChannelMutation, error) {
 	// 先重载子缓存(keys/models/grants); 失败时不发布 parent revision 到缓存,
 	// 但 DB 内的提交(含 revision 轮转与新增项)已经落库, ChannelDetailGet 仍可读到一致状态。
@@ -165,6 +192,21 @@ func ChannelSyncCommitAndRefresh(ctx context.Context, channelID int, mutation *C
 	}
 	channelCache.Set(channelID, cached)
 	channelStatsNeedUpdateLock.Unlock()
+	// 刷新 LLM 价格缓存: 事务内可能新增了 auto 价格记录(ensureAutoLLMInfo),
+	// 即使 sync 无新增 model/grant(no-op discovery), 仅补价格记录也需刷新缓存使 API 可见。
+	// 删除授权/模型后, 孤儿 auto 价格记录复用既有 LLMCleanupGhosts 语义清理(manual 保留)。
+	if err := LLMCleanupGhosts(ctx); err != nil {
+		return mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to cleanup llm ghosts: %w", err),
+			Mutation:   mutation,
+		}
+	}
+	if err := llmRefreshCache(ctx); err != nil {
+		return mutation, &PostCommitError{
+			RefreshErr: fmt.Errorf("failed to refresh llm cache: %w", err),
+			Mutation:   mutation,
+		}
+	}
 	return mutation, nil
 }
 

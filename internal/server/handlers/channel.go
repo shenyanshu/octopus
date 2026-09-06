@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,7 +10,6 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/modeldiscovery"
 	"github.com/bestruirui/octopus/internal/op"
-	"github.com/bestruirui/octopus/internal/price"
 	"github.com/bestruirui/octopus/internal/relay"
 	"github.com/bestruirui/octopus/internal/rhttp"
 	"github.com/bestruirui/octopus/internal/server/middleware"
@@ -73,6 +71,10 @@ func init() {
 		AddRoute(
 			router.NewRoute("/sync-models-all", http.MethodPost).
 				Handle(syncAllChannelModels),
+		).
+		AddRoute(
+			router.NewRoute("/auto-sync/enable-all", http.MethodPost).
+				Handle(enableAllAutoSync),
 		)
 }
 
@@ -126,10 +128,6 @@ func createChannel(c *gin.Context) {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := addChannelModelPrices(channel.Models, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
-		return
-	}
 	resp.Success(c, channel)
 }
 
@@ -165,10 +163,7 @@ func updateChannel(c *gin.Context) {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := addChannelModelPrices(channel.Models, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
-		return
-	}
+	// 清理无引用的 auto 模型价格记录; manual 保留。
 	if err := op.LLMCleanupGhosts(c.Request.Context()); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -225,25 +220,6 @@ func deleteChannel(c *gin.Context) {
 // handlers 与 channelsync 共用同一编排函数, 不复制不新事件框架。
 func processChannelMutation(mutation *op.ChannelMutation) {
 	channelsync.ApplyChannelMutation(mutation)
-}
-
-// addChannelModelPrices 为渠道模型匹配校准价格，并批量写入尚不存在的价格记录。
-func addChannelModelPrices(modelNames []string, ctx context.Context) error {
-	seen := make(map[string]struct{}, len(modelNames))
-	llmInfos := make([]model.LLMInfo, 0, len(modelNames))
-	for _, modelName := range modelNames {
-		modelName = strings.ToLower(modelName)
-		if _, ok := seen[modelName]; ok {
-			continue
-		}
-		seen[modelName] = struct{}{}
-		llmInfo := model.LLMInfo{Name: modelName}
-		if modelPrice := price.GetLLMPrice(modelName); modelPrice != nil {
-			llmInfo.LLMPrice = *modelPrice
-		}
-		llmInfos = append(llmInfos, llmInfo)
-	}
-	return op.LLMBatchCreate(llmInfos, ctx)
 }
 
 // fetchModel 按提交的渠道配置与凭据拉取上游模型列表, 并按过滤表达式筛选后返回。
@@ -352,4 +328,19 @@ func syncAllChannelModels(c *gin.Context) {
 		return
 	}
 	resp.Success(c, result)
+}
+
+// enableAllAutoSync 批量开启全部渠道的自动同步。
+// 持 relay.GroupGateLock across DB→cache 使变更线性化; 不启动同步, 不改 Enabled/keys/models/grants/stats。
+// 请求 {} 无参数; 响应 data={updated_count:number}。
+func enableAllAutoSync(c *gin.Context) {
+	// 批量改渠道配置(auto_sync_models)与缓存共享读写锁, 持写锁覆盖 DB→cache 完整序列。
+	relay.GroupGateLock()
+	defer relay.GroupGateUnlock()
+	count, err := op.ChannelEnableAllAutoSync(c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, model.ChannelAutoSyncEnableAllResult{UpdatedCount: count})
 }

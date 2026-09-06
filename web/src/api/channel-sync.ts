@@ -91,6 +91,33 @@ export function parseSyncIntervalHours(raw: string): number | null {
   return hours;
 }
 
+// classifyEnableAllResult 区分批量开启自动同步的回执: 有实际翻转报数量, 全部为 0 说明没有需要开启的渠道。
+export function classifyEnableAllResult(
+  updatedCount: number,
+): { kind: "updated"; count: number } | { kind: "none" } {
+  return updatedCount > 0
+    ? { kind: "updated", count: updatedCount }
+    : { kind: "none" };
+}
+
+// formatSyncChanges 生成一次同步完成的增删摘要分段; 四项都为 0 时返回空数组, 由界面决定不显示计数行,
+// 避免 no-op 也渲染出 "新增 0 移除 0" 的噪音。分隔符由调用方按语言决定。
+export function formatSyncChanges(
+  s: Pick<
+    ChannelModelSyncStatus,
+    "added_models" | "added_grants" | "removed_models" | "removed_grants"
+  >,
+  added: (models: number, grants: number) => string,
+  removed: (models: number, grants: number) => string,
+): string[] {
+  const parts: string[] = [];
+  if (s.added_models > 0 || s.added_grants > 0)
+    parts.push(added(s.added_models, s.added_grants));
+  if (s.removed_models > 0 || s.removed_grants > 0)
+    parts.push(removed(s.removed_models, s.removed_grants));
+  return parts;
+}
+
 // formatSyncTime 把 RFC3339 UTC 时间渲染为本地短格式; 缺失或非法时返回 null, 由界面决定不显示时间。
 export function formatSyncTime(
   iso: string | null,

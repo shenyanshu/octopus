@@ -1,0 +1,105 @@
+{
+  "openai": {
+    "models": {
+      "m1-good": {
+        "id": "gpt-4o",
+        "family": "gpt-4o",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 2.5, "output": 10, "cache_read": 1.25, "cache_write": 0.5}
+      },
+      "m2-explicit-free": {
+        "id": "gpt-free",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 0, "output": 0}
+      },
+      "m3-missing-cost": {
+        "id": "gpt-nocost",
+        "family": "gpt",
+        "modalities": {"output": ["text"]}
+      },
+      "m4-null-cost": {
+        "id": "gpt-nullcost",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": null
+      },
+      "m5-missing-input": {
+        "id": "gpt-noinput",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"output": 5}
+      },
+      "m6-missing-output": {
+        "id": "gpt-nooutput",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 5}
+      },
+      "m7-nonzero-cache-missing-cache-write": {
+        "id": "gpt-cachepartial",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 1, "output": 2, "cache_read": 0.5}
+      },
+      "m8-negative-input": {
+        "id": "gpt-neg",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": -1, "output": 5}
+      },
+      "m9-negative-cache": {
+        "id": "gpt-negcache",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 1, "output": 2, "cache_read": -0.5}
+      },
+      "m10-negative-cache-write": {
+        "id": "gpt-negcw",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 1, "output": 2, "cache_write": -1}
+      },
+      "m11-embed": {
+        "id": "gpt-embed",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 0.02, "output": 0.02}
+      },
+      "m12-thirdparty": {
+        "id": "thirdparty-model",
+        "family": "thirdparty",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 5, "output": 5}
+      },
+      "m13-image-output": {
+        "id": "gpt-image",
+        "family": "gpt",
+        "modalities": {"output": ["image"]},
+        "cost": {"input": 1, "output": 1}
+      },
+      "m14-mixed-case": {
+        "id": "GPT-Mixed",
+        "family": "GPT",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 3, "output": 6}
+      },
+      "m15-empty-cost-obj": {
+        "id": "gpt-emptycost",
+        "family": "gpt",
+        "modalities": {"output": ["text"]},
+        "cost": {}
+      }
+    }
+  },
+  "anthropic": {
+    "models": {
+      "a1-good": {
+        "id": "claude-3",
+        "family": "claude-3",
+        "modalities": {"output": ["text"]},
+        "cost": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}
+      }
+    }
+  }
+}

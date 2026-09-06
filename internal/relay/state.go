@@ -25,15 +25,18 @@ const (
 
 // 客户端请求的完整进程内状态, 同时作为状态流的消息形状; 上半部分在请求到达时写入并在结束时定稿, 下半部分每轮循环覆盖。
 type RequestState struct {
-	ID        uint64         `json:"id"`         // 请求在当前进程内的唯一标识。
-	Status    Status         `json:"status"`     // 请求当前状态。
-	StartedAt time.Time      `json:"started_at"` // 请求到达时间。
-	Duration  time.Duration  `json:"duration"`   // 请求总耗时, 未结束时为零。
-	Model     string         `json:"model"`      // 客户端请求的模型名称, 即分组名称。
-	Protocol  model.Protocol `json:"protocol"`   // 客户端请求使用的协议, 由入站格式定出, 单个协议位而非掩码组合。
-	GroupID   int            `json:"group_id"`   // 承载本请求的分组 ID, 供界面按主键直接定位分组而不必按名称回查。
-	Usage     llm.Usage      `json:"usage"`      // 请求结束时写入的展示用量。
-	Cost      float64        `json:"cost"`       // 请求结束时写入的累计费用。
+	ID                 uint64         `json:"id"`                   // 请求在当前进程内的唯一标识。
+	Status             Status         `json:"status"`               // 请求当前状态。
+	StartedAt          time.Time      `json:"started_at"`           // 请求到达时间。
+	Duration           time.Duration  `json:"duration"`             // 请求总耗时, 未结束时为零。
+	Model              string         `json:"model"`                // 客户端请求的模型名称, 即分组名称。
+	Protocol           model.Protocol `json:"protocol"`             // 客户端请求使用的协议, 由入站格式定出, 单个协议位而非掩码组合。
+	GroupID            int            `json:"group_id"`             // 承载本请求的分组 ID, 供界面按主键直接定位分组而不必按名称回查。
+	Usage              llm.Usage      `json:"usage"`                // 请求结束时写入的展示用量。
+	Cost               *float64       `json:"cost"`                 // 请求结束时写入的累计费用; running 或未知时为 null。
+	CostKnown          bool           `json:"cost_known"`           // 费用是否有可靠价格来源。
+	CostSource         string         `json:"cost_source"`          // "manual" | "actual_reference" | "group_reference" | "unknown"
+	CostReferenceModel *string        `json:"cost_reference_model"` // actual/group 参考匹配到的标准模型 ID; manual/unknown 为 null。
 
 	Round          int            `json:"round"`           // 最新一轮循环的递增序号, 人工中止按此匹配以免误杀下一轮。
 	TargetChannel  string         `json:"target_channel"`  // 最新一轮选中的渠道名称。
@@ -64,14 +67,18 @@ func newRequestState(modelName string, groupID int, protocol model.Protocol, bod
 	defer mu.Unlock()
 
 	request := &RequestState{
-		ID:        idSeq.Add(1),
-		Status:    StatusRunning,
-		StartedAt: time.Now(),
-		Model:     modelName,
-		Protocol:  protocol,
-		GroupID:   groupID,
-		body:      body,
-		apiKeyID:  apiKeyID,
+		ID:                 idSeq.Add(1),
+		Status:             StatusRunning,
+		StartedAt:          time.Now(),
+		Model:              modelName,
+		Protocol:           protocol,
+		GroupID:            groupID,
+		CostSource:         "unknown", // running 状态尚未记账, 枚举契约要求非空串。
+		CostKnown:          false,
+		Cost:               nil,
+		CostReferenceModel: nil,
+		body:               body,
+		apiKeyID:           apiKeyID,
 	}
 	requests[request.ID] = request
 	publishRequestLocked(request)
@@ -141,18 +148,18 @@ func (r *RequestState) markCommitted() {
 }
 
 // markSucceeded 以成功终态定稿请求。
-func (r *RequestState) markSucceeded(responseBody string, usage *llm.Usage) {
+func (r *RequestState) markSucceeded(responseBody string, accounting *UsageAccounting) {
 	mu.Lock()
 	defer mu.Unlock()
 
 	r.Status = StatusSuccess
 	r.Error = ""
 	r.responseBody = responseBody
-	r.finishLocked(usage)
+	r.finishLocked(accounting)
 }
 
 // markFailed 以失败终态定稿请求, 最终错误取自本次失败原因。
-func (r *RequestState) markFailed(err error, responseBody string, usage *llm.Usage) {
+func (r *RequestState) markFailed(err error, responseBody string, accounting *UsageAccounting) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -161,11 +168,11 @@ func (r *RequestState) markFailed(err error, responseBody string, usage *llm.Usa
 	if responseBody != "" {
 		r.responseBody = responseBody
 	}
-	r.finishLocked(usage)
+	r.finishLocked(accounting)
 }
 
 // markCanceled 以取消终态定稿请求, 用于客户端提前断开或主动取消。
-func (r *RequestState) markCanceled(err error, responseBody string, usage *llm.Usage) {
+func (r *RequestState) markCanceled(err error, responseBody string, accounting *UsageAccounting) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -174,18 +181,33 @@ func (r *RequestState) markCanceled(err error, responseBody string, usage *llm.U
 	if responseBody != "" {
 		r.responseBody = responseBody
 	}
-	r.finishLocked(usage)
+	r.finishLocked(accounting)
 }
 
 // finishLocked 写入用量和费用, 发布终态, 更新请求级统计并裁剪历史; 调用方必须持有锁。
-func (r *RequestState) finishLocked(usage *llm.Usage) {
+func (r *RequestState) finishLocked(accounting *UsageAccounting) {
 	r.Sending = false
 	r.cancel = nil
-	if usage != nil {
-		r.Usage = *usage
+	if accounting != nil {
+		r.Usage = accounting.Usage
 	}
-	metrics := usageMetrics(r.TargetModel, usage)
-	r.Cost = metrics.InputCost + metrics.OutputCost
+	var metrics model.StatsMetrics
+	var resolution op.PriceResolution
+	if accounting != nil {
+		metrics = accounting.Metrics
+		resolution = accounting.Resolution
+	} else {
+		resolution = op.PriceResolution{CostSource: "unknown"}
+	}
+	if resolution.CostKnown {
+		cost := metrics.InputCost + metrics.OutputCost
+		r.Cost = &cost
+	} else {
+		r.Cost = nil
+	}
+	r.CostKnown = resolution.CostKnown
+	r.CostSource = resolution.CostSource
+	r.CostReferenceModel = resolution.CostReferenceModel
 	r.Duration = time.Since(r.StartedAt)
 	metrics.WaitTime = r.Duration.Milliseconds()
 	if r.Status == StatusSuccess {
@@ -217,25 +239,35 @@ func (r *RequestState) finishLocked(usage *llm.Usage) {
 	}
 }
 
-// usageMetrics 将统一用量按模型单价转换为 Token 与费用统计; 无用量或价格时对应费用为零。
-func usageMetrics(modelName string, usage *llm.Usage) model.StatsMetrics {
+// UsageAccounting 是一次用量费用计算的完整快照, 渠道统计与请求级记账复用同一结果, 避免重复查价。
+type UsageAccounting struct {
+	Usage      llm.Usage          // 统一用量。
+	Metrics    model.StatsMetrics // 按单价转换的 Token 与费用统计。
+	Resolution op.PriceResolution // 价格解析结果(manual/actual/group/unknown)。
+}
+
+// computeUsageAccounting 一次性解析价格并计算费用, 供渠道统计与 finishLocked 复用。
+// usage 为 nil 时返回 nil, finishLocked 据此设 cost=null + unknown 元数据。
+func computeUsageAccounting(actualModel, groupModel string, usage *llm.Usage) *UsageAccounting {
 	if usage == nil {
-		return model.StatsMetrics{}
+		return nil
 	}
-	metrics := model.StatsMetrics{InputToken: usage.PromptTokens, OutputToken: usage.CompletionTokens}
-	price, err := op.LLMGet(modelName)
-	if err != nil {
-		return metrics
+	accounting := &UsageAccounting{Usage: *usage}
+	accounting.Metrics = model.StatsMetrics{InputToken: usage.PromptTokens, OutputToken: usage.CompletionTokens}
+	accounting.Resolution = op.ResolveUsagePrice(actualModel, groupModel)
+	if !accounting.Resolution.CostKnown {
+		return accounting
 	}
+	price := accounting.Resolution.Price
 	cachedTokens, writeCachedTokens := int64(0), int64(0)
 	if usage.PromptTokensDetails != nil {
 		cachedTokens = usage.PromptTokensDetails.CachedTokens
 		writeCachedTokens = usage.PromptTokensDetails.WriteCachedTokens
 	}
 	inputTokens := max(int64(0), usage.PromptTokens-cachedTokens-writeCachedTokens)
-	metrics.InputCost = (float64(inputTokens)*price.Input + float64(cachedTokens)*price.CacheRead + float64(writeCachedTokens)*price.CacheWrite) / 1_000_000
-	metrics.OutputCost = float64(usage.CompletionTokens) * price.Output / 1_000_000
-	return metrics
+	accounting.Metrics.InputCost = (float64(inputTokens)*price.Input + float64(cachedTokens)*price.CacheRead + float64(writeCachedTokens)*price.CacheWrite) / 1_000_000
+	accounting.Metrics.OutputCost = float64(usage.CompletionTokens) * price.Output / 1_000_000
+	return accounting
 }
 
 // publishRequestLocked 非阻塞发布最新请求状态, 连接拥塞时关闭它并交给客户端重连获取全量快照; 调用方必须持有锁。
