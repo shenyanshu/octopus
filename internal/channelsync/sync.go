@@ -302,7 +302,10 @@ func discoverOneKey(ctx context.Context, snapshot op.ChannelSyncSnapshot, key op
 	}
 	defer httpClient.CloseIdleConnections()
 
-	result, err := modeldiscovery.Discover(keyCtx, httpClient, snapshot.Config, key.Key, snapshot.Config.MatchRegex)
+	// 全局过滤只作用于手动"获取模型"路径(见 channel.go 的 fetch handler), 自动同步不参与:
+	// 同步会删除"上游不再返回"的 sync_managed 授权与孤儿模型, 若在此应用全局正则,
+	// 用户调整正则就会把被过滤的模型当作"上游不再返回"而误删。
+	result, err := modeldiscovery.Discover(keyCtx, httpClient, snapshot.Config, key.Key, snapshot.Config.MatchRegex, "")
 	if err != nil {
 		return op.KeyDiscovery{KeyID: key.ID, Err: err}
 	}

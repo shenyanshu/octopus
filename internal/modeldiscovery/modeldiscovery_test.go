@@ -128,7 +128,7 @@ func TestDiscoverAttributesProtocolByEndpointNotCompletionOrder(t *testing.T) {
 	}
 	got := make(chan out, 1)
 	go func() {
-		r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+		r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 		got <- out{r, err}
 	}()
 
@@ -168,7 +168,7 @@ func TestDiscoverAttributesProtocolWhenOpenAIReturnsFirst(t *testing.T) {
 		err error
 	}, 1)
 	go func() {
-		r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+		r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 		got <- struct {
 			r   Result
 			err error
@@ -198,7 +198,7 @@ func TestDiscoverSharedModelUnionsProtocols(t *testing.T) {
 		gatedHandler(http.StatusOK, anthropicList(false, "", "shared-model"), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestDiscoverOpenAI401AnthropicOKIsPartial(t *testing.T) {
 		gatedHandler(http.StatusOK, anthropicList(false, "", "claude-3"), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestDiscoverAnthropic401OpenAIOKIsPartial(t *testing.T) {
 		gatedHandler(http.StatusUnauthorized, `{"error":"bad key"}`, nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestDiscoverBoth401ReturnsError(t *testing.T) {
 		gatedHandler(http.StatusUnauthorized, `{"error":"anthropic-secret"}`, nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want error (两侧都失败)")
 	}
@@ -282,7 +282,7 @@ func TestDiscoverEmptyButSuccessfulEndpointsYieldEmptyNonNilModels(t *testing.T)
 		gatedHandler(http.StatusOK, anthropicList(false, ""), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestDiscoverInvalidRegexFailsBeforeNetwork(t *testing.T) {
 	)
 	cfg := newTestConfig(srv.URL)
 	// 未闭合的分组是 ECMAScript 非法模式。
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "(unclosed")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "(unclosed", "")
 	if err == nil {
 		t.Fatal("err = nil, want regex compile error")
 	}
@@ -326,7 +326,7 @@ func TestDiscoverRegexTimeoutBoundedAndSafe(t *testing.T) {
 	)
 	cfg := newTestConfig(srv.URL)
 	start := time.Now()
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, `(a+)+$`)
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, `(a+)+$`, "")
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("err = nil, want match timeout error")
@@ -353,7 +353,7 @@ func TestDiscoverContextCancelTerminatesWithoutLeak(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	got := make(chan error, 1)
 	go func() {
-		_, err := Discover(ctx, srv.Client(), cfg, testKey, "")
+		_, err := Discover(ctx, srv.Client(), cfg, testKey, "", "")
 		got <- err
 	}()
 	// 给探测一点时间发起请求(然后阻塞在 gate 上), 再取消。
@@ -392,7 +392,7 @@ func TestDiscoverAnthropicPaginationMultiPage(t *testing.T) {
 	// OpenAI 侧空成功, 确保 Anthropic 分页路径被单独验证。
 	srv := dispatchServer(t, gatedHandler(http.StatusOK, openAIList(), nil, nil), mux)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestDiscoverAnthropicPaginationCycleDetected(t *testing.T) {
 		gatedHandler(http.StatusUnauthorized, `{"error":"x"}`, nil, nil),
 		mux)
 	cfg := newTestConfig(srv.URL)
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want pagination cycle error")
 	}
@@ -469,7 +469,7 @@ func TestDiscoverAnthropicPaginationCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	got := make(chan error, 1)
 	go func() {
-		_, err := Discover(ctx, srv.Client(), cfg, testKey, "")
+		_, err := Discover(ctx, srv.Client(), cfg, testKey, "", "")
 		got <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -498,7 +498,7 @@ func TestDiscoverRejectsOversizedSuccessBody(t *testing.T) {
 		gatedHandler(http.StatusOK, anthropicList(false, "", "claude"), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	// Anthropic 侧成功, OpenAI 侧超大被拒 —— 属单侧失败, Partial=true, 仅 Anthropic 模型可用。
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
@@ -523,7 +523,7 @@ func TestDiscoverUpstreamErrorDoesNotLeakSecrets(t *testing.T) {
 		gatedHandler(http.StatusOK, anthropicList(false, "", "claude-3"), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err (单侧失败应返回 nil): %v", err)
 	}
@@ -536,7 +536,7 @@ func TestDiscoverUpstreamErrorDoesNotLeakSecrets(t *testing.T) {
 		gatedHandler(http.StatusUnauthorized, body, nil, nil),
 	)
 	cfg2 := newTestConfig(srv2.URL)
-	_, bothErr := Discover(context.Background(), srv2.Client(), cfg2, testKey, "")
+	_, bothErr := Discover(context.Background(), srv2.Client(), cfg2, testKey, "", "")
 	if bothErr == nil {
 		t.Fatal("both-fail err = nil")
 	}
@@ -557,7 +557,7 @@ func TestDiscoverTransportErrorSanitized(t *testing.T) {
 		OpenAIResponsePath:   testOpenAIResponsePath,
 		AnthropicMessagePath: testAnthropicMessagePath,
 	}
-	_, err := Discover(context.Background(), http.DefaultClient, cfg, testKey, "")
+	_, err := Discover(context.Background(), http.DefaultClient, cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want transport error")
 	}
@@ -594,7 +594,7 @@ func TestDiscoverCustomHeadersApplied(t *testing.T) {
 	t.Cleanup(srv.Close)
 	cfg := newTestConfig(srv.URL)
 	cfg.CustomHeader = []model.CustomHeader{{HeaderKey: "X-Custom-H", HeaderValue: "val-123"}}
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -611,7 +611,7 @@ func TestDiscoverDropsBlankModelNames(t *testing.T) {
 		gatedHandler(http.StatusOK, anthropicList(false, "", "", "claude"), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -643,7 +643,7 @@ func TestDiscoverUpstreamReasonPhraseNotLeaked(t *testing.T) {
 	})
 	srv := dispatchServer(t, mux, mux)
 	cfg := newTestConfig(srv.URL)
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want 401 error")
 	}
@@ -666,7 +666,7 @@ func TestDiscoverMalformedJSONFieldTypeNotLeaked(t *testing.T) {
 		gatedHandler(http.StatusOK, anthropicList(false, "", "claude"), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err (单侧失败应 nil): %v", err)
 	}
@@ -676,7 +676,7 @@ func TestDiscoverMalformedJSONFieldTypeNotLeaked(t *testing.T) {
 		gatedHandler(http.StatusOK, body, nil, nil),
 	)
 	cfg2 := newTestConfig(srv2.URL)
-	_, bothErr := Discover(context.Background(), srv2.Client(), cfg2, testKey, "")
+	_, bothErr := Discover(context.Background(), srv2.Client(), cfg2, testKey, "", "")
 	if bothErr == nil {
 		t.Fatal("both-fail err = nil")
 	}
@@ -701,7 +701,7 @@ func TestDiscoverBodyReadErrorSanitized(t *testing.T) {
 	})
 	srv := dispatchServer(t, mux, mux)
 	cfg := newTestConfig(srv.URL)
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		// 两边都断连 → 应返回错误。
 		t.Fatal("err = nil, want body read error")
@@ -727,7 +727,7 @@ func TestDiscoverMalformedCustomHeaderSecretNotLeaked(t *testing.T) {
 	)
 	cfg := newTestConfig(srv.URL)
 	cfg.CustomHeader = []model.CustomHeader{{HeaderKey: "X-Custom", HeaderValue: secretValue}}
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		t.Skip("当前 http client 未拒绝该 header 值, 跳过泄漏校验")
 	}
@@ -744,7 +744,7 @@ func TestDiscoverCustomRoundTripperErrorSanitized(t *testing.T) {
 	rt := &errRoundTripper{err: errors.New(leakedDetail)}
 	client := &http.Client{Transport: rt}
 	cfg := newTestConfig("http://example.test")
-	_, err := Discover(context.Background(), client, cfg, testKey, "")
+	_, err := Discover(context.Background(), client, cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want transport error")
 	}
@@ -773,7 +773,7 @@ func TestDiscoverMissingDataArrayRejected(t *testing.T) {
 		gatedHandler(http.StatusOK, anthropicList(false, "", "claude"), nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	// 单侧失败: Anthropic 成功, OpenAI 形状不符 → Partial=true, 不返回错误。
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
@@ -795,7 +795,7 @@ func TestDiscoverNullDataRejected(t *testing.T) {
 		gatedHandler(http.StatusOK, body, nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want error (data:null 两侧都形状不符)")
 	}
@@ -812,7 +812,7 @@ func TestDiscoverDataNotArrayRejected(t *testing.T) {
 		gatedHandler(http.StatusOK, body, nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	_, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want error (data 非数组)")
 	}
@@ -825,7 +825,7 @@ func TestDiscoverEmptyDataArraySuccess(t *testing.T) {
 		gatedHandler(http.StatusOK, `{"data":[]}`, nil, nil),
 	)
 	cfg := newTestConfig(srv.URL)
-	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "")
+	r, err := Discover(context.Background(), srv.Client(), cfg, testKey, "", "")
 	if err != nil {
 		t.Fatalf("Discover err: %v", err)
 	}
@@ -845,7 +845,7 @@ func TestDiscoverContextCanceledErrorsIsPreserved(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	got := make(chan error, 1)
 	go func() {
-		_, err := Discover(ctx, srv.Client(), cfg, testKey, "")
+		_, err := Discover(ctx, srv.Client(), cfg, testKey, "", "")
 		got <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -869,7 +869,7 @@ func TestDiscoverContextDeadlineErrorsIsPreserved(t *testing.T) {
 	// 极短超时, 让两侧都因 DeadlineExceeded 失败。
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	_, err := Discover(ctx, srv.Client(), cfg, testKey, "")
+	_, err := Discover(ctx, srv.Client(), cfg, testKey, "", "")
 	if err == nil {
 		t.Fatal("err = nil, want deadline error")
 	}

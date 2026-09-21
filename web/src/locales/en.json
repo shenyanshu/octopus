@@ -153,16 +153,15 @@
       "label": "Stats Save Interval",
       "placeholder": "Enter interval in minutes"
     },
-    "modelSyncInterval": {
-      "label": "Model sync interval (hours)",
-      "placeholder": "1–168",
-      "hint": "Applies to channels with auto-sync enabled",
-      "invalid": "Enter an integer between 1 and 168"
-    },
     "corsAllowOrigins": {
       "label": "CORS Allowed Origins",
       "hint": "Empty = deny all, * = allow all",
       "example": "Only allow specific domains: https://example.com,https://example2.com"
+    },
+    "modelFilter": {
+      "label": "Global Model Filter",
+      "placeholder": "Enter filter regex",
+      "hint": "Applied along with the channel's own filter when fetching models (AND); empty means no filter"
     },
     "saved": "Saved",
     "backup": {
@@ -279,8 +278,18 @@
     "info": {
       "title": "Version Info",
       "currentVersion": "Current Version",
+      "latestVersion": "Latest Version",
       "github": "GitHub Repository",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "versionMismatch": "Version Mismatch",
+      "versionMismatchHint": "Frontend version ({frontend}) does not match backend version ({backend}). This may be a browser cache issue. Please force refresh the page.",
+      "forceRefresh": "Force Refresh",
+      "newVersionAvailable": "New version available",
+      "newVersionAvailableHint": "Please backup your data first, then update the system",
+      "updateNow": "Update Now",
+      "updating": "Updating...",
+      "updateSuccess": "Update successful, service will restart shortly",
+      "updateFailed": "Update failed"
     },
     "log": {
       "title": "Log Settings",
@@ -291,6 +300,12 @@
       },
       "clearSuccess": "Logs cleared",
       "clearFailed": "Failed to clear logs"
+    },
+    "modelSyncInterval": {
+      "label": "Model sync interval (hours)",
+      "placeholder": "1–168",
+      "hint": "Applies to channels with auto-sync enabled",
+      "invalid": "Enter an integer between 1 and 168"
     }
   },
   "group": {
@@ -324,7 +339,6 @@
       "modeHint": "Manual fixes one member; failover follows member order and switches on failures; scored keeps using the highest-scoring member",
       "manual": "Manual",
       "failover": "Failover",
-      "scored": "Scored",
       "members": "Members",
       "relay": "Routing",
       "retryCount": "Maximum Attempts",
@@ -341,7 +355,9 @@
       "affinityHint": "Time to keep the fallback member after its first successful request",
       "items": "Member Order",
       "addItem": "Add Model",
+      "autoAdd": "Auto Add",
       "clear": "Clear",
+      "scored": "Scored",
       "autoAddPattern": "Auto-match Pattern",
       "autoAddPatternPlaceholder": "Go regex, e.g. ^gpt-4o",
       "autoAddPatternHint": "Matches model names, case-sensitive; use (?i) for case-insensitive. Saving backfills matching available grants (add-only); clear the pattern to stop auto-adding",
@@ -422,6 +438,19 @@
       "channelChanged": "Channel switched",
       "channelCleared": "Channel selection cleared",
       "channelChangeFailed": "Failed to switch channel",
+      "responseContent": "Response Content",
+      "noRequestContent": "(No request content)",
+      "noResponseContent": "(No response content)",
+      "tokens": "tokens",
+      "retryIndex": "Retry {index}",
+      "retryDetails": "Retry Details",
+      "stopRound": "Cancel Current Round",
+      "stopFailed": "Failed to cancel current round",
+      "cancelRequest": "Cancel Current Request",
+      "cancelFailed": "Failed to cancel current request",
+      "waitingChannelSelection": "Waiting for channel selection",
+      "waitingResponse": "Waiting for upstream response",
+      "responseStreaming": "Upstream responded; streaming is in progress",
       "exclude": "Exclude",
       "restore": "Restore",
       "excludeTooltip": "Exclude this channel from the current group; no routing mode will use it",
@@ -438,17 +467,6 @@
       "cancel": "Cancel",
       "confirmExclude": "Confirm exclusion",
       "excludeLastWarning": "The current group will have no selectable member, and new requests will fail immediately",
-      "responseContent": "Response Content",
-      "noRequestContent": "(No request content)",
-      "noResponseContent": "(No response content)",
-      "tokens": "tokens",
-      "retryIndex": "Retry {index}",
-      "retryDetails": "Retry Details",
-      "stopRound": "Stop Current Round",
-      "stopFailed": "Failed to stop current round",
-      "waitingChannelSelection": "Waiting for channel selection",
-      "waitingResponse": "Waiting for upstream response",
-      "responseStreaming": "Upstream responded; streaming is in progress",
       "costPending": "-",
       "estimatedByGroup": "Estimated by group reference price ({model})",
       "costUnknown": "Not priced"
@@ -492,8 +510,6 @@
       "apiKey": "API Key",
       "enabled": "Enabled",
       "proxy": "Use proxy",
-      "autoSyncModels": "Auto-sync models",
-      "autoSyncModelsHint": "On each key's sync, new upstream models are added; auto-managed entries that disappeared upstream are removed only when that key's sync fully succeeds with a non-empty result. Failures, partial syncs, or empty results remove nothing; manual and historical entries are kept. Turning this off never deletes existing models.",
       "keys": "Credentials",
       "keyAdd": "Add credential",
       "keyName": "Name",
@@ -522,16 +538,18 @@
       "submit": "Create",
       "save": "Save",
       "cancel": "Cancel",
+      "backToStats": "Back to Stats",
+      "grantClearAll": "Clear all models",
+      "modelRemove": "Remove model",
+      "grantRemove": "Remove this key’s grant",
+      "autoSyncModels": "Auto-sync models",
+      "autoSyncModelsHint": "On each key's sync, new upstream models are added; auto-managed entries that disappeared upstream are removed only when that key's sync fully succeeds with a non-empty result. Failures, partial syncs, or empty results remove nothing; manual and historical entries are kept. Turning this off never deletes existing models.",
       "conflict": "This channel was updated elsewhere; your draft is stale.",
       "conflictReload": "Reload",
       "conflictConfirm": "Reloading discards your unsaved changes. Continue?",
       "conflictConfirmButton": "Discard & reload",
       "conflictCancel": "Cancel",
-      "conflictReloadFailed": "Reload failed; your draft was kept. Try again.",
-      "backToStats": "Back to Stats",
-      "grantClearAll": "Clear all models",
-      "modelRemove": "Remove model",
-      "grantRemove": "Remove this key’s grant"
+      "conflictReloadFailed": "Reload failed; your draft was kept. Try again."
     },
     "sync": {
       "status": {

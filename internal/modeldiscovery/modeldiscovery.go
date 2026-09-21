@@ -36,13 +36,17 @@ type Result struct {
 	Partial bool
 }
 
-// Discover 同时探测 OpenAI 与 Anthropic 两侧, 合并成功结果并按 matchRegex 过滤。
+// Discover 同时探测 OpenAI 与 Anthropic 两侧, 合并成功结果并按 matchRegex 与 globalFilter 过滤。
 // 两侧并发执行; 恰好一侧失败时另一侧结果仍可用(Partial=true), 两侧都失败时返回错误。
-// matchRegex 使用 regexp2.ECMAScript 语法, 空串表示不过滤;
+// 两枚正则均使用 regexp2.ECMAScript 语法, 空串表示不过滤, 模型须同时通过两者才保留;
 // 正则先于网络编译, 非法模式立即失败, 不会触达上游。
-func Discover(ctx context.Context, httpClient *http.Client, config model.ChannelConfig, key, matchRegex string) (Result, error) {
+func Discover(ctx context.Context, httpClient *http.Client, config model.ChannelConfig, key, matchRegex, globalFilter string) (Result, error) {
 	// 先编译正则: 非法模式在发任何上游请求前就失败, 避免无意义的网络副作用。
 	re, err := compileMatchRegex(matchRegex)
+	if err != nil {
+		return Result{}, err
+	}
+	reGlobal, err := compileMatchRegex(globalFilter)
 	if err != nil {
 		return Result{}, err
 	}
@@ -72,7 +76,7 @@ func Discover(ctx context.Context, httpClient *http.Client, config model.Channel
 	}
 	partial := openaiErr != nil || anthropicErr != nil
 
-	models, err := mergeModels(openaiModels, anthropicModels, re, ctx)
+	models, err := mergeModels(openaiModels, anthropicModels, re, reGlobal, ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -80,8 +84,8 @@ func Discover(ctx context.Context, httpClient *http.Client, config model.Channel
 }
 
 // mergeModels 把两侧模型名按"先 OpenAI 后 Anthropic"的固定顺序并入同一有序集合,
-// 同名模型在两侧都出现时协议位取并集。顺序写死而非按 map 遍历, 使界面排序稳定。
-func mergeModels(openaiModels, anthropicModels []string, re *regexp2.Regexp, ctx context.Context) ([]model.ChannelFetchModel, error) {
+// 同名模型在两侧都出现时协议位取并集, 模型须同时通过渠道与全局两枚正则才保留。顺序写死而非按 map 遍历, 使界面排序稳定。
+func mergeModels(openaiModels, anthropicModels []string, re, reGlobal *regexp2.Regexp, ctx context.Context) ([]model.ChannelFetchModel, error) {
 	protocolsByModel := make(map[string]model.Protocol, len(openaiModels)+len(anthropicModels))
 	order := make([]string, 0, len(openaiModels)+len(anthropicModels))
 	appendModel := func(name string, proto model.Protocol) error {
@@ -89,12 +93,15 @@ func mergeModels(openaiModels, anthropicModels []string, re *regexp2.Regexp, ctx
 		if strings.TrimSpace(name) == "" {
 			return nil
 		}
-		if re != nil {
-			// 每条模型名匹配前先看 ctx 是否已取消, 整体取消能尽早结束而非被正则卡住。
-			if err := ctx.Err(); err != nil {
-				return err
+		// 每条模型名匹配前先看 ctx 是否已取消, 整体取消能尽早结束而非被正则卡住。
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for _, pattern := range []*regexp2.Regexp{re, reGlobal} {
+			if pattern == nil {
+				continue
 			}
-			matched, err := re.MatchString(name)
+			matched, err := pattern.MatchString(name)
 			if err != nil {
 				// regexp2 的 MatchString 仅在超时时返回错误, 且错误串会带上原始输入(上游模型名);
 				// 返回固定安全消息, 不把上游模型名透出给调用方。

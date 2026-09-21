@@ -22,16 +22,20 @@ func init() {
 				Handle(streamOverview),
 		).
 		AddRoute(
-			router.NewRoute("/:id/request-body", http.MethodGet).
+			router.NewRoute("/request-body/:id", http.MethodGet).
 				Handle(getRequestBody),
 		).
 		AddRoute(
-			router.NewRoute("/:id/response-body", http.MethodGet).
+			router.NewRoute("/response-body/:id", http.MethodGet).
 				Handle(getResponseBody),
 		).
 		AddRoute(
-			router.NewRoute("/:request_id/:round/stop", http.MethodPost).
-				Handle(interruptRound),
+			router.NewRoute("/stop/:id", http.MethodPost).
+				Handle(stopRequest),
+		).
+		AddRoute(
+			router.NewRoute("/stop/:id/:round", http.MethodPost).
+				Handle(stopRequest),
 		).
 		AddRoute(
 			router.NewRoute("/clear", http.MethodDelete).
@@ -39,19 +43,23 @@ func init() {
 		)
 }
 
-// interruptRound 中止请求当前轮次匹配的上游调用。
-func interruptRound(c *gin.Context) {
-	requestID, err := strconv.ParseUint(c.Param("request_id"), 10, 64)
+// stopRequest 按是否提供轮次参数, 中止单个轮次或整个请求。
+func stopRequest(c *gin.Context) {
+	requestID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, "invalid request id")
 		return
 	}
-	round, err := strconv.Atoi(c.Param("round"))
-	if err != nil || round < 1 {
-		resp.Error(c, http.StatusBadRequest, "invalid round")
-		return
+	if roundText := c.Param("round"); roundText != "" {
+		round, err := strconv.Atoi(roundText)
+		if err != nil || round < 1 {
+			resp.Error(c, http.StatusBadRequest, "invalid round")
+			return
+		}
+		relay.Interrupt(requestID, round)
+	} else {
+		relay.CancelRequest(requestID)
 	}
-	relay.Interrupt(requestID, round)
 	c.Status(http.StatusNoContent)
 }
 

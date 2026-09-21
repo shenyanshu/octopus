@@ -16,6 +16,7 @@ export const SettingKey = {
   // ModelSyncInterval 是渠道模型自动同步的全局周期, 单位小时的字符串, 默认 '6', 合法范围 1..168。
   ModelSyncInterval: "model_sync_interval",
   CORSAllowOrigins: "cors_allow_origins",
+  ModelFilter: "model_filter",
 } as const;
 
 /**

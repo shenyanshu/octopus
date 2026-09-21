@@ -53,7 +53,7 @@ func GroupListModel() []string {
 }
 
 // GroupGetByName 返回客户端模型名称对应的分组配置, 供转发选路使用。
-// 成员的可用性由 groupSnapshot 与读取接口同口径补齐: 评分模式选路需要跳过不可用成员,
+// 成员的可用性由 groupSnapshot 与读取接口同口径补齐: 所有模式选路统一以 Available 为门槛跳过不可用成员,
 // 名称等其余展示字段对转发无害; 授权详情由 ChannelGrantGet 按主键单独取,
 // 那里会连带校验凭据启用与两侧存在, 使拿到的授权必然可直接转发。
 func GroupGetByName(name string) (model.Group, error) {

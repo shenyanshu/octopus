@@ -247,7 +247,10 @@ func fetchModel(c *gin.Context) {
 	}
 	defer httpClient.CloseIdleConnections()
 
-	result, err := modeldiscovery.Discover(ctx, httpClient, target, request.Key, target.MatchRegex)
+	// 全局过滤由设置页维护, 与渠道过滤同取 AND: 模型须同时通过两枚正则才保留, 留空的一侧不生效。
+	// 设置缺失按不过滤处理: 启动初始化会补齐默认值, 缺行只可能出现在旧库尚未刷新的瞬间。
+	globalFilter, _ := op.SettingGetString(model.SettingKeyModelFilter)
+	result, err := modeldiscovery.Discover(ctx, httpClient, target, request.Key, target.MatchRegex, globalFilter)
 	if err != nil {
 		// 正则编译失败按 400 返回, 其余按 502 上游错误。
 		if _, ok := err.(*regexp2syntax.Error); ok {

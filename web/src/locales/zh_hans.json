@@ -153,16 +153,15 @@
       "label": "统计保存周期（分钟）",
       "placeholder": "请输入周期（分钟）"
     },
-    "modelSyncInterval": {
-      "label": "模型同步周期（小时）",
-      "placeholder": "1–168",
-      "hint": "对已开启自动同步的渠道生效",
-      "invalid": "请输入 1 到 168 的整数小时数"
-    },
     "corsAllowOrigins": {
       "label": "CORS 跨域白名单",
       "hint": "为空禁止跨域，* 允许所有",
       "example": "只允许指定域名: https://example.com,https://example2.com"
+    },
+    "modelFilter": {
+      "label": "全局模型过滤",
+      "placeholder": "请输入过滤表达式",
+      "hint": "渠道获取模型时与渠道自身的过滤表达式同时生效（AND），留空不过滤"
     },
     "saved": "已保存",
     "backup": {
@@ -279,8 +278,18 @@
     "info": {
       "title": "版本信息",
       "currentVersion": "当前版本",
+      "latestVersion": "最新版本",
       "github": "GitHub 仓库",
-      "unknown": "未知"
+      "unknown": "未知",
+      "versionMismatch": "版本不匹配",
+      "versionMismatchHint": "前端版本 ({frontend}) 与后端版本 ({backend}) 不一致，可能是浏览器缓存问题，请强制刷新页面。",
+      "forceRefresh": "强制刷新",
+      "newVersionAvailable": "发现新版本可用",
+      "newVersionAvailableHint": "请先备份数据，然后更新系统",
+      "updateNow": "立即更新",
+      "updating": "更新中...",
+      "updateSuccess": "更新成功，服务即将重启",
+      "updateFailed": "更新失败"
     },
     "log": {
       "title": "日志设置",
@@ -291,6 +300,12 @@
       },
       "clearSuccess": "日志已清空",
       "clearFailed": "清空失败"
+    },
+    "modelSyncInterval": {
+      "label": "模型同步周期（小时）",
+      "placeholder": "1–168",
+      "hint": "对已开启自动同步的渠道生效",
+      "invalid": "请输入 1 到 168 的整数小时数"
     }
   },
   "group": {
@@ -324,7 +339,6 @@
       "modeHint": "手动固定选中成员；故障转移按成员顺序并在失败时切换；评分路由持续使用最高分成员",
       "manual": "手动",
       "failover": "故障转移",
-      "scored": "评分路由",
       "members": "成员",
       "relay": "路由策略",
       "retryCount": "总尝试次数",
@@ -341,7 +355,9 @@
       "affinityHint": "备用成员首次请求成功后继续使用该成员的时间",
       "items": "成员顺序",
       "addItem": "添加模型",
+      "autoAdd": "自动添加",
       "clear": "清空",
+      "scored": "评分路由",
       "autoAddPattern": "自动匹配规则",
       "autoAddPatternPlaceholder": "Go 正则，如 ^gpt-4o",
       "autoAddPatternHint": "按模型名匹配，区分大小写，可用 (?i) 忽略大小写。保存时自动补齐匹配的可用授权，只增不减；清空规则停止自动添加",
@@ -422,6 +438,19 @@
       "channelChanged": "渠道已切换",
       "channelCleared": "已取消渠道选择",
       "channelChangeFailed": "渠道切换失败",
+      "responseContent": "响应内容",
+      "noRequestContent": "(无请求内容)",
+      "noResponseContent": "(无响应内容)",
+      "tokens": "词元",
+      "retryIndex": "重试 {index}",
+      "retryDetails": "重试详情",
+      "stopRound": "取消当前轮次",
+      "stopFailed": "取消当前轮次失败",
+      "cancelRequest": "取消当前请求",
+      "cancelFailed": "取消当前请求失败",
+      "waitingChannelSelection": "正在等待选择渠道",
+      "waitingResponse": "正在等待上游响应",
+      "responseStreaming": "上游已响应，流式传输正在进行",
       "exclude": "排除",
       "restore": "恢复",
       "excludeTooltip": "从当前分组排除此渠道，所有路由模式都不会再使用它",
@@ -438,17 +467,6 @@
       "cancel": "取消",
       "confirmExclude": "确认排除",
       "excludeLastWarning": "当前分组将没有可选成员，新请求会立即失败",
-      "responseContent": "响应内容",
-      "noRequestContent": "(无请求内容)",
-      "noResponseContent": "(无响应内容)",
-      "tokens": "词元",
-      "retryIndex": "重试 {index}",
-      "retryDetails": "重试详情",
-      "stopRound": "停止当前轮次",
-      "stopFailed": "停止当前轮次失败",
-      "waitingChannelSelection": "正在等待选择渠道",
-      "waitingResponse": "正在等待上游响应",
-      "responseStreaming": "上游已响应，流式传输正在进行",
       "costPending": "-",
       "estimatedByGroup": "按分组名参考价估算（{model}）",
       "costUnknown": "未计价"
@@ -492,8 +510,6 @@
       "apiKey": "API Key",
       "enabled": "启用",
       "proxy": "使用代理",
-      "autoSyncModels": "自动同步模型",
-      "autoSyncModelsHint": "开启后按系统周期逐凭据同步模型：新增上游多出的模型，仅在该凭据完整成功且非空时移除其已消失的自动管理项；失败、部分成功或空结果不删除，手动添加与历史项不受影响。关闭不会删除已有模型。",
       "keys": "凭据",
       "keyAdd": "添加凭据",
       "keyName": "名称",
@@ -522,16 +538,18 @@
       "submit": "创建",
       "save": "保存",
       "cancel": "取消",
+      "backToStats": "返回统计",
+      "grantClearAll": "清空全部模型",
+      "modelRemove": "移除模型",
+      "grantRemove": "移除该凭据的授权",
+      "autoSyncModels": "自动同步模型",
+      "autoSyncModelsHint": "开启后按系统周期逐凭据同步模型：新增上游多出的模型，仅在该凭据完整成功且非空时移除其已消失的自动管理项；失败、部分成功或空结果不删除，手动添加与历史项不受影响。关闭不会删除已有模型。",
       "conflict": "该渠道已在别处更新，当前草稿不是最新。",
       "conflictReload": "重新加载",
       "conflictConfirm": "重新加载将丢弃当前未保存的修改，确定继续？",
       "conflictConfirmButton": "确认重载",
       "conflictCancel": "取消",
-      "conflictReloadFailed": "重新加载失败，请重试；草稿已保留。",
-      "backToStats": "返回统计",
-      "grantClearAll": "清空全部模型",
-      "modelRemove": "移除模型",
-      "grantRemove": "移除该凭据的授权"
+      "conflictReloadFailed": "重新加载失败，请重试；草稿已保留。"
     },
     "sync": {
       "status": {

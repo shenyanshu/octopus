@@ -78,8 +78,8 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 		}
 
 		// 登记进程内请求状态, 返回的记录是后续全部状态写入和前端可视化推送的入口。
-		request := newRequestState(metadata.Model, group.ID, requestProtocol, string(raw.Body), c.GetInt("api_key_id"))
-		ctx := c.Request.Context()
+		request := newRequestState(c.Request.Context(), metadata.Model, group.ID, requestProtocol, string(raw.Body), c.GetInt("api_key_id"))
+		ctx := request.requestCtx
 		failedItemID := 0              // 当前累计连续失败次数的成员 ID。
 		failures := 0                  // 该成员包含首次请求的连续失败次数。
 		excluded := make(map[int]bool) // 本请求内不再选择的成员: 已跨网络边界尝试过或已确认本地不可用。
@@ -427,6 +427,12 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			}
 			// 记录本轮已经取得可提交的上游响应。
 			request.finishRound("")
+			// 请求级取消可能与上游成功同时到达, 此时不应提交响应或继续重试。
+			if ctx.Err() != nil {
+				releaseRouteProbe(group, item.ID, routeEpoch)
+				request.markCanceled(ctx.Err(), "", computeUsageAccounting(channelModel.Name, request.Model, result.usage))
+				return
+			}
 			roundWaitTime := time.Since(roundStartedAt).Milliseconds() // 流式响应只统计等待首帧的时间。
 			// 上游成功后解除该成员的冷却与探测占用, 并按路由配置开始亲和。
 			recordRouteSuccess(group, item.ID, routeEpoch)
@@ -455,7 +461,7 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				_ = op.ChannelKeyStatsUpdate(channelKey.ID, metrics)
 				// 评分模式: 非流式响应完整取得即上游完整成功, 此后客户端写失败不改变该成员的健康结论。
 				recordScoredSuccess(group, item.ID, routeEpoch)
-				request.markCommitted()
+				request.markCommitted(false)
 				n, err := c.Writer.Write(result.body)
 				if err == nil && n != len(result.body) {
 					err = io.ErrShortWrite
@@ -486,13 +492,15 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			for {
 				if event != nil {
 					chunks = append(chunks, event)
+					// 每个事件计一个输出字符供日志页展示, 按节流间隔发布。
+					request.addOutput()
 					encoded.Reset()
 					if encodeErr := sse.Encode(&encoded, sse.Event{Id: event.LastEventID, Event: event.Type, Data: event.Data}); encodeErr != nil {
 						err = encodeErr
 						break
 					}
 					if !committed {
-						request.markCommitted()
+						request.markCommitted(true)
 						committed = true
 					}
 					n, writeErr := c.Writer.Write(encoded.Bytes())
@@ -526,6 +534,7 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				err = errors.New("upstream stream ended without terminal event")
 				upstreamFault = true
 			}
+			request.finishStream()
 			result.events.Close()
 			// 事件流已读完, 渠道专用代理的独占连接池到此归还。
 			if result.closeIdle != nil {

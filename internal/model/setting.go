@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+
+	"github.com/dlclark/regexp2"
 )
 
 type SettingKey string
@@ -14,6 +16,7 @@ const (
 	SettingKeyModelInfoUpdateInterval SettingKey = "model_info_update_interval" // 模型信息更新间隔(小时)
 	SettingKeyCORSAllowOrigins        SettingKey = "cors_allow_origins"         // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
 	SettingKeyModelSyncInterval       SettingKey = "model_sync_interval"        // 模型同步间隔(小时), 控制自动同步上游模型的周期
+	SettingKeyModelFilter             SettingKey = "model_filter"              // 渠道获取模型时的全局过滤表达式; 留空表示不过滤
 )
 
 type Setting struct {
@@ -28,6 +31,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyCORSAllowOrigins, Value: ""},          // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
 		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"}, // 默认24小时更新一次模型信息
 		{Key: SettingKeyModelSyncInterval, Value: "6"},        // 默认6小时自动同步一次上游模型
+		{Key: SettingKeyModelFilter, Value: ""},               // 默认不过滤模型
 	}
 }
 
@@ -46,6 +50,15 @@ func (s *Setting) Validate() error {
 		}
 		if v < 1 || v > 168 {
 			return fmt.Errorf("model sync interval must be between 1 and 168 hours")
+		}
+		return nil
+	case SettingKeyModelFilter:
+		if s.Value == "" {
+			return nil
+		}
+		// 与渠道侧一致用 ECMAScript 方言校验, 避免设置能存但探测时编译失败。
+		if _, err := regexp2.Compile(s.Value, regexp2.ECMAScript); err != nil {
+			return fmt.Errorf("model filter regex is invalid: %w", err)
 		}
 		return nil
 	case SettingKeyProxyURL:

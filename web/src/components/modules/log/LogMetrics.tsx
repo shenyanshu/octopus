@@ -6,6 +6,9 @@ import {
   Cpu,
   Database,
   DollarSign,
+  Gauge,
+  KeyRound,
+  Timer,
 } from "lucide-react";
 import { useTranslations } from "use-intl";
 import {
@@ -51,11 +54,31 @@ export function LogMetrics({
 }) {
   const t = useTranslations("log");
   const cachedTokens = log.usage.prompt_tokens_details?.cached_tokens ?? 0;
-  // 进行中的请求按共享时钟推算耗时, 结束后改用后端记录的最终耗时。
-  const duration =
-    log.status === "running" || log.status === "committed"
-      ? formatMilliseconds(now - new Date(log.started_at).getTime())
-      : formatMilliseconds(log.duration / 1_000_000);
+  // 缓存率取输入缓存占全部输入 Token 的比例, 无输入时为零。
+  const cacheRate =
+    log.usage.prompt_tokens > 0
+      ? Math.round((cachedTokens / log.usage.prompt_tokens) * 100)
+      : 0;
+  // 请求进行中显示实时总耗时; 结束后只显示实际响应阶段耗时, 提交前结束时回退到总耗时。
+  const requestActive = log.status === "running" || log.status === "committed";
+  const elapsedMs = requestActive
+    ? now - new Date(log.started_at).getTime()
+    : log.duration / 1_000_000;
+  const responseMs = (log.stream_duration || log.response_duration) / 1_000_000;
+  const duration = formatMilliseconds(
+    !requestActive && responseMs > 0 ? responseMs : elapsedMs,
+  );
+  // 首字时间仅流式响应存在, 非流式或尚未提交时留空。
+  const firstToken =
+    log.first_token_duration > 0
+      ? formatMilliseconds(log.first_token_duration / 1_000_000)
+      : "-";
+  // 请求进行中使用同一份服务端快照中的字符数和流式传输时长, 结束后改用最终 Token 数。
+  const outputCount = requestActive
+    ? log.output_chars
+    : log.usage.completion_tokens;
+  const outputSpeed = responseMs > 0 ? outputCount / (responseMs / 1000) : 0;
+  const outputSpeedUnit = requestActive ? "c/s" : "t/s";
   const metrics = [
     {
       key: "time",
@@ -64,6 +87,20 @@ export function LogMetrics({
       iconStyle: { color: brandColor } as CSSProperties,
       value: formatTime(log.started_at),
       valueClassName: "tabular-nums",
+      cellClassName: "col-span-4 whitespace-nowrap md:col-span-1",
+    },
+    {
+      key: "apiKey",
+      Icon: KeyRound,
+      iconClassName: "size-3.5 shrink-0 text-orange-500",
+      value: log.api_key_name || "-",
+      cellClassName: "col-span-4 whitespace-nowrap md:col-span-1",
+    },
+    {
+      key: "firstToken",
+      Icon: Timer,
+      iconClassName: "size-3.5 shrink-0 text-amber-500",
+      value: firstToken,
       cellClassName: "col-span-4 whitespace-nowrap md:col-span-1",
     },
     {
@@ -91,14 +128,14 @@ export function LogMetrics({
       key: "cached",
       Icon: Database,
       iconClassName: "size-3.5 shrink-0 text-cyan-500",
-      value: cachedTokens.toLocaleString(),
+      value: `${cachedTokens.toLocaleString()} (${cacheRate}%)`,
       cellClassName: "col-span-3 md:col-span-1",
     },
     {
       key: "completion",
       Icon: ArrowUpFromLine,
       iconClassName: "size-3.5 shrink-0 text-purple-500",
-      value: log.usage.completion_tokens.toLocaleString(),
+      value: outputCount.toLocaleString(),
       cellClassName: "col-span-3 md:col-span-1",
     },
     {
@@ -108,6 +145,14 @@ export function LogMetrics({
       value: (
         log.usage.prompt_tokens_details?.write_cached_tokens ?? 0
       ).toLocaleString(),
+      cellClassName: "col-span-3 md:col-span-1",
+    },
+    {
+      key: "speed",
+      Icon: Gauge,
+      iconClassName: "size-3.5 shrink-0 text-sky-500",
+      value:
+        outputSpeed > 0 ? `${outputSpeed.toFixed(0)}${outputSpeedUnit}` : "-",
       cellClassName: "col-span-3 md:col-span-1",
     },
   ];
