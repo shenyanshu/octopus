@@ -1,4 +1,4 @@
-name: release
+name: publish
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 # 发布必须串行且不可取消，避免并发发布或重跑到一半被取消造成半发布。
 concurrency:
-  group: release
+  group: publish
   cancel-in-progress: false
 
 jobs:
